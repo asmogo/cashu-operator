@@ -51,7 +51,20 @@ var _ = Describe("CashuMint Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: mintv1alpha1.CashuMintSpec{
+						MintInfo: mintv1alpha1.MintInfo{
+							URL: "http://test-mint.local",
+						},
+						Database: mintv1alpha1.DatabaseConfig{
+							Engine: "sqlite",
+							SQLite: &mintv1alpha1.SQLiteConfig{
+								DataDir: "/data",
+							},
+						},
+						Lightning: mintv1alpha1.LightningConfig{
+							Backend: "fakewallet",
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}

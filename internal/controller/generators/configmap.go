@@ -30,8 +30,9 @@ import (
 )
 
 // GenerateConfigMap creates a ConfigMap containing the config.toml for the mint
-func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*corev1.ConfigMap, error) {
-	configToml, err := generateConfigToml(mint)
+// dbPassword is the postgres password for auto-provisioned databases (can be empty if not applicable)
+func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme, dbPassword string) (*corev1.ConfigMap, error) {
+	configToml, err := generateConfigToml(mint, dbPassword)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate config.toml: %w", err)
 	}
@@ -66,7 +67,8 @@ func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*c
 }
 
 // generateConfigToml generates the TOML configuration content
-func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
+// dbPassword is the postgres password for auto-provisioned databases (can be empty if not applicable)
+func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string, error) {
 	var buf bytes.Buffer
 
 	// [info] section
@@ -87,7 +89,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 
 	// Mnemonic is loaded via environment variable for security
 	if mint.Spec.MintInfo.MnemonicSecretRef != nil {
-		buf.WriteString("# Mnemonic loaded from secret via CASHU_MNEMONIC environment variable\n")
+		buf.WriteString("# Mnemonic loaded from secret via CDK_MINTD_MNEMONIC environment variable\n")
 	}
 
 	// [mint_info] section
@@ -141,12 +143,33 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 	case "postgres":
 		if mint.Spec.Database.Postgres != nil {
 			buf.WriteString("\n[database.postgres]\n")
-			// URL is loaded via environment variable for security
-			buf.WriteString("# Database URL loaded from CDK_MINTD_DATABASE_URL environment variable\n")
+
+			// cdk-mintd requires the database URL to be in the config file
+			if mint.Spec.Database.Postgres.AutoProvision {
+				// Construct the URL for auto-provisioned postgres with password in cleartext
+				postgresHost := fmt.Sprintf("%s-postgres", mint.Name)
+				postgresUser := "cdk"
+				postgresDB := "cdk_mintd"
+				dbURL := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s?sslmode=disable",
+					postgresUser, dbPassword, postgresHost, postgresDB)
+				buf.WriteString(fmt.Sprintf("url = %q\n", dbURL))
+			} else if mint.Spec.Database.Postgres.URL != "" {
+				// Direct URL specified (not recommended for production)
+				buf.WriteString(fmt.Sprintf("url = %q\n", mint.Spec.Database.Postgres.URL))
+			} else {
+				// URL from secret - commented out as we need the actual URL in the config
+				buf.WriteString("# Database URL must be provided via spec.database.postgres.url or urlSecretRef\n")
+			}
 
 			tlsMode := mint.Spec.Database.Postgres.TLSMode
 			if tlsMode == "" {
-				tlsMode = "require"
+				// Default to 'disable' for auto-provisioned postgres (internal cluster communication)
+				// and 'require' for external postgres
+				if mint.Spec.Database.Postgres.AutoProvision {
+					tlsMode = "disable"
+				} else {
+					tlsMode = "require"
+				}
 			}
 			buf.WriteString(fmt.Sprintf("tls_mode = %q\n", tlsMode))
 
@@ -238,27 +261,41 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 		}
 
 	case "fakewallet":
+		buf.WriteString("\n[fake_wallet]\n")
+
+		// Set defaults
+		supportedUnits := []string{"sat"}
+		feePercent := 0.02
+		reserveFeeMin := int32(1)
+		minDelayTime := int32(1)
+		maxDelayTime := int32(3)
+
+		// Override with user-specified values if provided
 		if mint.Spec.Lightning.FakeWallet != nil {
-			buf.WriteString("\n[fake_wallet]\n")
-
 			if len(mint.Spec.Lightning.FakeWallet.SupportedUnits) > 0 {
-				units := strings.Join(mint.Spec.Lightning.FakeWallet.SupportedUnits, `", "`)
-				buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
+				supportedUnits = mint.Spec.Lightning.FakeWallet.SupportedUnits
 			}
-
 			if mint.Spec.Lightning.FakeWallet.FeePercent != nil {
-				buf.WriteString(fmt.Sprintf("fee_percent = %f\n", *mint.Spec.Lightning.FakeWallet.FeePercent))
+				feePercent = *mint.Spec.Lightning.FakeWallet.FeePercent
 			}
 			if mint.Spec.Lightning.FakeWallet.ReserveFeeMin != nil {
-				buf.WriteString(fmt.Sprintf("reserve_fee_min = %d\n", *mint.Spec.Lightning.FakeWallet.ReserveFeeMin))
+				reserveFeeMin = *mint.Spec.Lightning.FakeWallet.ReserveFeeMin
 			}
 			if mint.Spec.Lightning.FakeWallet.MinDelayTime != nil {
-				buf.WriteString(fmt.Sprintf("min_delay_time = %d\n", *mint.Spec.Lightning.FakeWallet.MinDelayTime))
+				minDelayTime = *mint.Spec.Lightning.FakeWallet.MinDelayTime
 			}
 			if mint.Spec.Lightning.FakeWallet.MaxDelayTime != nil {
-				buf.WriteString(fmt.Sprintf("max_delay_time = %d\n", *mint.Spec.Lightning.FakeWallet.MaxDelayTime))
+				maxDelayTime = *mint.Spec.Lightning.FakeWallet.MaxDelayTime
 			}
 		}
+
+		// Write configuration
+		units := strings.Join(supportedUnits, `", "`)
+		buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
+		buf.WriteString(fmt.Sprintf("fee_percent = %f\n", feePercent))
+		buf.WriteString(fmt.Sprintf("reserve_fee_min = %d\n", reserveFeeMin))
+		buf.WriteString(fmt.Sprintf("min_delay_time = %d\n", minDelayTime))
+		buf.WriteString(fmt.Sprintf("max_delay_time = %d\n", maxDelayTime))
 
 	case "grpcprocessor":
 		if mint.Spec.Lightning.GRPCProcessor != nil {
@@ -266,10 +303,13 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 			buf.WriteString(fmt.Sprintf("addr = %q\n", mint.Spec.Lightning.GRPCProcessor.Address))
 			buf.WriteString(fmt.Sprintf("port = %d\n", mint.Spec.Lightning.GRPCProcessor.Port))
 
+			// Default supported units
+			supportedUnits := []string{"sat"}
 			if len(mint.Spec.Lightning.GRPCProcessor.SupportedUnits) > 0 {
-				units := strings.Join(mint.Spec.Lightning.GRPCProcessor.SupportedUnits, `", "`)
-				buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
+				supportedUnits = mint.Spec.Lightning.GRPCProcessor.SupportedUnits
 			}
+			units := strings.Join(supportedUnits, `", "`)
+			buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
 
 			// TLS configuration if provided
 			if mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {

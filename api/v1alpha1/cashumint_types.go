@@ -117,6 +117,16 @@ type CashuMintSpec struct {
 	// Storage specifies persistent storage configuration
 	// +optional
 	Storage *StorageConfig `json:"storage,omitempty"`
+
+	// PodSecurityContext specifies the security context for the pod
+	// If not specified, defaults to RunAsNonRoot=true, RunAsUser=1000, FSGroup=1000
+	// +optional
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
+
+	// ContainerSecurityContext specifies the security context for the mint container
+	// If not specified, defaults to AllowPrivilegeEscalation=false, ReadOnlyRootFilesystem=false, RunAsNonRoot=true
+	// +optional
+	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty"`
 }
 
 // MintInfo contains metadata about the mint

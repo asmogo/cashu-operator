@@ -366,8 +366,24 @@ func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv
 func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
-	// Generate PostgreSQL Secret
-	secret, err := generators.GeneratePostgresSecret(cashuMint, r.Scheme)
+	// Check if secret already exists and get existing password
+	var existingPassword string
+	secretName := cashuMint.Name + "-postgres-secret"
+	existingSecret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Namespace: cashuMint.Namespace,
+		Name:      secretName,
+	}, existingSecret); err == nil {
+		// Secret exists, use the existing password
+		existingPassword = string(existingSecret.Data["password"])
+		logger.Info("Using existing postgres password from secret")
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get existing postgres secret: %w", err)
+	}
+	// If secret doesn't exist, existingPassword remains empty and a new one will be generated
+
+	// Generate PostgreSQL Secret (with existing password if available)
+	secret, err := generators.GeneratePostgresSecret(cashuMint, r.Scheme, existingPassword)
 	if err != nil {
 		return fmt.Errorf("failed to generate PostgreSQL secret: %w", err)
 	}
@@ -428,7 +444,29 @@ func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint
 func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
-	configMap, err := generators.GenerateConfigMap(cashuMint, r.Scheme)
+	// Fetch the postgres password if auto-provisioned
+	var dbPassword string
+	if cashuMint.Spec.Database.Engine == "postgres" &&
+		cashuMint.Spec.Database.Postgres != nil &&
+		cashuMint.Spec.Database.Postgres.AutoProvision {
+		secretName := cashuMint.Name + "-postgres-secret"
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{
+			Namespace: cashuMint.Namespace,
+			Name:      secretName,
+		}, secret); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to get postgres secret: %w", err)
+			}
+			// Secret doesn't exist yet, will be created in reconcilePostgres
+			logger.Info("Postgres secret not found yet, will reconcile later")
+			dbPassword = ""
+		} else {
+			dbPassword = string(secret.Data["password"])
+		}
+	}
+
+	configMap, err := generators.GenerateConfigMap(cashuMint, r.Scheme, dbPassword)
 	if err != nil {
 		return fmt.Errorf("failed to generate ConfigMap: %w", err)
 	}

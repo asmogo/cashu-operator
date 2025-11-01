@@ -37,7 +37,8 @@ const (
 )
 
 // GeneratePostgresSecret creates a Secret for PostgreSQL credentials
-func GeneratePostgresSecret(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*corev1.Secret, error) {
+// existingPassword should be provided if the secret already exists to avoid regenerating the password
+func GeneratePostgresSecret(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme, existingPassword string) (*corev1.Secret, error) {
 	if mint.Spec.Database.Postgres == nil || !mint.Spec.Database.Postgres.AutoProvision {
 		return nil, nil
 	}
@@ -49,13 +50,18 @@ func GeneratePostgresSecret(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme
 		"app.kubernetes.io/managed-by": "cashu-operator",
 	}
 
-	// Generate a secure random password
-	password, err := generateSecurePassword(32)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate password: %w", err)
+	// Use existing password or generate a new one
+	password := existingPassword
+	if password == "" {
+		var err error
+		password, err = generateSecurePassword(32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate password: %w", err)
+		}
 	}
 
 	// Construct database URL
+	// Use sslmode=disable for auto-provisioned postgres (internal cluster communication)
 	dbURL := fmt.Sprintf("postgresql://%s:%s@%s-postgres:5432/%s?sslmode=disable",
 		postgresUser, password, mint.Name, postgresDatabase)
 
@@ -180,6 +186,68 @@ func GeneratePostgresStatefulSet(mint *mintv1alpha1.CashuMint, scheme *runtime.S
 					Labels: labels,
 				},
 				Spec: corev1.PodSpec{
+					InitContainers: []corev1.Container{
+						{
+							Name:  "init-password",
+							Image: fmt.Sprintf("postgres:%s-alpine", version),
+							Command: []string{
+								"sh",
+								"-c",
+								// This script ensures the password in postgres matches the secret
+								// It only runs if postgres is already initialized
+								`if [ -f /var/lib/postgresql/data/pgdata/PG_VERSION ]; then
+  echo "Database already initialized, ensuring password is correct..."
+  # Start postgres temporarily in the background
+  su-exec postgres postgres -D /var/lib/postgresql/data/pgdata &
+  PG_PID=$!
+  # Wait for postgres to be ready
+  for i in $(seq 1 30); do
+    if pg_isready -U ` + postgresUser + ` -d ` + postgresDatabase + ` > /dev/null 2>&1; then
+      echo "Postgres is ready"
+      break
+    fi
+    sleep 1
+  done
+  # Update the password
+  psql -U ` + postgresUser + ` -d ` + postgresDatabase + ` -c "ALTER USER ` + postgresUser + ` WITH PASSWORD '${POSTGRES_PASSWORD}';" || true
+  # Stop postgres
+  kill $PG_PID
+  wait $PG_PID
+  echo "Password updated successfully"
+else
+  echo "Database not yet initialized, skipping password update"
+fi`,
+							},
+							Env: []corev1.EnvVar{
+								{
+									Name: "POSTGRES_PASSWORD",
+									ValueFrom: &corev1.EnvVarSource{
+										SecretKeyRef: &corev1.SecretKeySelector{
+											LocalObjectReference: corev1.LocalObjectReference{
+												Name: mint.Name + "-postgres-secret",
+											},
+											Key: "password",
+										},
+									},
+								},
+								{
+									Name:  "PGDATA",
+									Value: "/var/lib/postgresql/data/pgdata",
+								},
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{
+									Name:      "data",
+									MountPath: "/var/lib/postgresql/data",
+								},
+							},
+							SecurityContext: &corev1.SecurityContext{
+								AllowPrivilegeEscalation: boolPtr(false),
+								RunAsNonRoot:             boolPtr(false), // Need root to run su-exec
+								RunAsUser:                int64Ptr(0),
+							},
+						},
+					},
 					Containers: []corev1.Container{
 						{
 							Name:  "postgres",

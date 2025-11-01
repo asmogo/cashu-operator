@@ -105,11 +105,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 		NodeSelector:     mint.Spec.NodeSelector,
 		Tolerations:      mint.Spec.Tolerations,
 		Affinity:         mint.Spec.Affinity,
-		SecurityContext: &corev1.PodSecurityContext{
-			RunAsNonRoot: boolPtr(true),
-			RunAsUser:    int64Ptr(1000),
-			FSGroup:      int64Ptr(1000),
-		},
+		SecurityContext:  getPodSecurityContext(mint),
 	}
 
 	return podSpec
@@ -149,7 +145,7 @@ func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
-					Path:   "/health",
+					Path:   "/v1/info",
 					Port:   intstr.FromString("api"),
 					Scheme: corev1.URISchemeHTTP,
 				},
@@ -174,14 +170,7 @@ func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 			SuccessThreshold:    1,
 			FailureThreshold:    3,
 		},
-		SecurityContext: &corev1.SecurityContext{
-			AllowPrivilegeEscalation: boolPtr(false),
-			ReadOnlyRootFilesystem:   boolPtr(false),
-			RunAsNonRoot:             boolPtr(true),
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{"ALL"},
-			},
-		},
+		SecurityContext: getContainerSecurityContext(mint),
 	}
 
 	return container
@@ -232,7 +221,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	envVars := []corev1.EnvVar{
 		{
 			Name:  "CASHU_CONFIG",
-			Value: "/config/config.toml",
+			Value: "/root/.cdk-mintd/config.toml",
 		},
 		{
 			Name:  "CASHU_DATA_DIR",
@@ -263,7 +252,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	// Mnemonic from secret
 	if mint.Spec.MintInfo.MnemonicSecretRef != nil {
 		envVars = append(envVars, corev1.EnvVar{
-			Name: "CASHU_MNEMONIC",
+			Name: "CDK_MINTD_MNEMONIC",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: mint.Spec.MintInfo.MnemonicSecretRef,
 			},
@@ -271,26 +260,14 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	}
 
 	// Database configuration
+	// Note: For auto-provisioned postgres, the URL with password is now in the config file
+	// For external postgres with URLSecretRef, we still use environment variables
 	if mint.Spec.Database.Engine == "postgres" && mint.Spec.Database.Postgres != nil {
-		// Database URL from secret or auto-provisioned
 		if mint.Spec.Database.Postgres.URLSecretRef != nil {
 			envVars = append(envVars, corev1.EnvVar{
 				Name: "CDK_MINTD_DATABASE_URL",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: mint.Spec.Database.Postgres.URLSecretRef,
-				},
-			})
-		} else if mint.Spec.Database.Postgres.AutoProvision {
-			// Auto-provisioned PostgreSQL
-			envVars = append(envVars, corev1.EnvVar{
-				Name: "CDK_MINTD_DATABASE_URL",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: mint.Name + "-postgres-secret",
-						},
-						Key: "database-url",
-					},
 				},
 			})
 		} else if mint.Spec.Database.Postgres.URL != "" {
@@ -300,6 +277,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 				Value: mint.Spec.Database.Postgres.URL,
 			})
 		}
+		// For auto-provisioned postgres, the URL is now directly in the config file
 	}
 
 	// Auth database configuration
@@ -374,7 +352,7 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
 		{
 			Name:      "config",
-			MountPath: "/config/config.toml",
+			MountPath: "/root/.cdk-mintd/config.toml",
 			SubPath:   "config.toml",
 			ReadOnly:  true,
 		},
@@ -510,6 +488,37 @@ func getResourceRequirements(mint *mintv1alpha1.CashuMint) corev1.ResourceRequir
 		Limits: corev1.ResourceList{
 			corev1.ResourceCPU:    resource.MustParse("1000m"),
 			corev1.ResourceMemory: resource.MustParse("512Mi"),
+		},
+	}
+}
+
+// getPodSecurityContext returns the pod security context
+func getPodSecurityContext(mint *mintv1alpha1.CashuMint) *corev1.PodSecurityContext {
+	if mint.Spec.PodSecurityContext != nil {
+		return mint.Spec.PodSecurityContext
+	}
+
+	// Default security context
+	return &corev1.PodSecurityContext{
+		RunAsNonRoot: boolPtr(true),
+		RunAsUser:    int64Ptr(1000),
+		FSGroup:      int64Ptr(1000),
+	}
+}
+
+// getContainerSecurityContext returns the container security context
+func getContainerSecurityContext(mint *mintv1alpha1.CashuMint) *corev1.SecurityContext {
+	if mint.Spec.ContainerSecurityContext != nil {
+		return mint.Spec.ContainerSecurityContext
+	}
+
+	// Default security context
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: boolPtr(false),
+		ReadOnlyRootFilesystem:   boolPtr(false),
+		RunAsNonRoot:             boolPtr(true),
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
 		},
 	}
 }

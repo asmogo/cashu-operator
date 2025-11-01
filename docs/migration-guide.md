@@ -68,7 +68,7 @@ Use the table below to convert manual configuration into `CashuMint` spec fields
 |--------------------------------------------------|------------------------------|----------------------------------------------------------|
 | `mintd` container image                           | Deployment.spec.template     | `spec.image`                                             |
 | Container args/env vars                           | Deployment                    | `spec.mintInfo`, `spec.logging`, `spec.resources`, etc. |
-| Mnemonic secret (`CASHU_MNEMONIC`)                | Secret                        | `spec.mintInfo.mnemonicSecretRef`                       |
+| Mnemonic secret (`CDK_MINTD_MNEMONIC`)                | Secret                        | `spec.mintInfo.mnemonicSecretRef`                       |
 | Config TOML file                                  | ConfigMap / volume            | Operator auto-generates from spec; remove manual ConfigMap |
 | Database URL env (`CDK_MINTD_DATABASE_URL`)       | Secret/env var                | `spec.database.postgres.urlSecretRef` or `spec.database.postgres.url` |
 | Auto-provisioned Postgres                         | StatefulSet + PVC             | `spec.database.postgres.autoProvision=true` + `autoProvisionSpec` |

@@ -3,6 +3,19 @@ kind: CashuMint
 metadata:
   name: cashumint-postgres
 spec:
+  image: asmogo/mintd:sha-e573e43-amd64
+  podSecurityContext:
+    runAsUser: 0
+    fsGroup: 0
+    runAsNonRoot: false
+
+  # Override container security context
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: false
+    capabilities:
+      drop:
+        - ALL
   mintInfo:
     url: https://postgres-mint.example.com
     mnemonicSecretRef:
@@ -12,13 +25,14 @@ spec:
     engine: postgres
     postgres:
       autoProvision: true
+      tlsMode: disable
       autoProvisionSpec:
-        storageSize: 20Gi
+        storageSize: 5Gi
         version: "16"
         resources:
           requests:
-            cpu: 250m
-            memory: 512Mi
+            cpu: 100m
+            memory: 128Mi
   lightning:
     backend: fakewallet
     fakeWallet:
