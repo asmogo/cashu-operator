@@ -1,0 +1,32 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-lnd
+spec:
+  mintInfo:
+    url: https://lnd-mint.example.com
+    mnemonicSecretRef:
+      name: cashumint-lnd-secrets
+      key: mnemonic
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+  lightning:
+    backend: lnd
+    lnd:
+      address: https://lnd.lightning.svc.cluster.local:10009
+      macaroonSecretRef:
+        name: lnd-credentials
+        key: admin.macaroon
+      certSecretRef:
+        name: lnd-credentials
+        key: tls.cert
+  ingress:
+    enabled: true
+    host: lnd-mint.example.com
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt-prod

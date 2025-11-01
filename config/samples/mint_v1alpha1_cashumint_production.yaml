@@ -1,0 +1,65 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-production
+spec:
+  image: ghcr.io/cashubtc/cdk-mintd:v0.10.0
+  mintInfo:
+    url: https://cashu.example.com
+    name: "Example Cashu Mint"
+    description: "Production-grade Cashu mint with gRPC processor"
+    mnemonicSecretRef:
+      name: cashumint-production-secrets
+      key: mnemonic
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 100Gi
+        storageClassName: fast-ssd
+        version: "16"
+        resources:
+          requests:
+            cpu: 1
+            memory: 2Gi
+          limits:
+            cpu: 2
+            memory: 4Gi
+  lightning:
+    backend: grpcprocessor
+    grpcProcessor:
+      address: grpc-processor.cashu.svc.cluster.local
+      port: 50051
+      supportedUnits:
+        - sat
+      tlsSecretRef:
+        name: grpc-client-cert
+        key: bundle
+  ingress:
+    enabled: true
+    host: cashu.example.com
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt-prod
+        issuerKind: ClusterIssuer
+  service:
+    type: ClusterIP
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "8085"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2
+      memory: 2Gi
+  storage:
+    size: 20Gi
+    storageClassName: fast-ssd
+  logging:
+    level: info
+    format: json

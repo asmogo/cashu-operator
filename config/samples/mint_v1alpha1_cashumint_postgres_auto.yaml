@@ -1,0 +1,34 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-postgres
+spec:
+  mintInfo:
+    url: https://postgres-mint.example.com
+    mnemonicSecretRef:
+      name: cashumint-postgres-secrets
+      key: mnemonic
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 20Gi
+        version: "16"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+  lightning:
+    backend: fakewallet
+    fakeWallet:
+      supportedUnits:
+        - sat
+  ingress:
+    enabled: true
+    host: postgres-mint.example.com
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt-prod

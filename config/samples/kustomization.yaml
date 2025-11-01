@@ -1,0 +1,8 @@
+## Append samples of your project ##
+resources:
+  - mint_v1alpha1_cashumint_minimal.yaml
+  - mint_v1alpha1_cashumint_postgres_auto.yaml
+  - mint_v1alpha1_cashumint_external_postgres.yaml
+  - mint_v1alpha1_cashumint_lnd.yaml
+  - mint_v1alpha1_cashumint_production.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples

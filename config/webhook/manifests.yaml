@@ -1,0 +1,52 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /mutate-mint-cashu-asmogo-github-io-v1alpha1-cashumint
+  failurePolicy: Fail
+  name: mcashumint.kb.io
+  rules:
+  - apiGroups:
+    - mint.cashu.asmogo.github.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - cashumints
+  sideEffects: None
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-mint-cashu-asmogo-github-io-v1alpha1-cashumint
+  failurePolicy: Fail
+  name: vcashumint.kb.io
+  rules:
+  - apiGroups:
+    - mint.cashu.asmogo.github.io
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - cashumints
+  sideEffects: None

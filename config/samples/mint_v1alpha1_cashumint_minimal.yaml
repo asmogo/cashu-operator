@@ -1,0 +1,23 @@
+# Minimal CashuMint for testing (requires the referenced Secret in the same namespace)
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-minimal
+spec:
+  image: cashubtc/mintd:latest
+  mintInfo:
+    url: http://cashumint-minimal.local
+    mnemonicSecretRef:
+      name: cashumint-minimal-secrets
+      key: mnemonic
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  storage:
+    size: 5Gi
+  lightning:
+    backend: fakewallet
+    fakeWallet:
+      supportedUnits:
+        - sat

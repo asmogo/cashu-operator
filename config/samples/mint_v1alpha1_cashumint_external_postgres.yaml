@@ -1,0 +1,32 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-external-db
+spec:
+  mintInfo:
+    url: https://external-mint.example.com
+    mnemonicSecretRef:
+      name: cashumint-external-secrets
+      key: mnemonic
+  database:
+    engine: postgres
+    postgres:
+      tlsMode: require
+      urlSecretRef:
+        name: cashumint-external-db
+        key: DATABASE_URL
+      maxConnections: 30
+      connectionTimeoutSeconds: 15
+  lightning:
+    backend: fakewallet
+    fakeWallet:
+      supportedUnits:
+        - sat
+  ingress:
+    enabled: true
+    host: external-mint.example.com
+    tls:
+      enabled: true
+      secretName: external-mint-tls
+  service:
+    type: ClusterIP

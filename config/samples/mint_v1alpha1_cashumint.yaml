@@ -1,0 +1,9 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  labels:
+    app.kubernetes.io/name: cashu-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: cashumint-sample
+spec:
+  # TODO(user): Add fields here
