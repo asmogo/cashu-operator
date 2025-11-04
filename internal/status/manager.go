@@ -208,7 +208,7 @@ func (m *Manager) UpdateIngressStatus(ctx context.Context, mint *mintv1alpha1.Ca
 
 		// Set URL based on ingress
 		if len(ingress.Status.LoadBalancer.Ingress) > 0 {
-			if ingress.Spec.TLS != nil && len(ingress.Spec.TLS) > 0 {
+			if len(ingress.Spec.TLS) > 0 {
 				mint.Status.URL = "https://" + mint.Spec.Ingress.Host
 			} else {
 				mint.Status.URL = "http://" + mint.Spec.Ingress.Host

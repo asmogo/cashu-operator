@@ -78,7 +78,7 @@ func (cr *CompositeReconciler) Reconcile(ctx context.Context, mint *mintv1alpha1
 			return ctrl.Result{}, err
 		}
 		// If any reconciler requests a requeue, propagate it
-		if result.Requeue || result.RequeueAfter > 0 {
+		if result.RequeueAfter > 0 {
 			return result, nil
 		}
 	}
