@@ -21,16 +21,32 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
+)
+
+// Requeue timing constants for common reconciliation scenarios
+const (
+	// DefaultRequeueAfterShort is used for quick retries on transient errors
+	DefaultRequeueAfterShort = 5 * time.Second
+
+	// DefaultRequeueAfterMedium is used for medium-term retry intervals
+	DefaultRequeueAfterMedium = 30 * time.Second
+
+	// DefaultRequeueAfterLong is used for periodic status checks
+	DefaultRequeueAfterLong = 2 * time.Minute
 )
 
 // Applier provides utilities for applying and managing Kubernetes resources.
@@ -147,4 +163,41 @@ func CreateObjectKey(namespace, name string) client.ObjectKey {
 		Namespace: namespace,
 		Name:      name,
 	}
+}
+
+// TypeMeta creates a TypeMeta for a Kubernetes resource.
+func TypeMeta(apiVersion, kind string) metav1.TypeMeta {
+	return metav1.TypeMeta{
+		APIVersion: apiVersion,
+		Kind:       kind,
+	}
+}
+
+// ObjectMeta creates an ObjectMeta with namespace and name.
+func ObjectMeta(namespace, name string) metav1.ObjectMeta {
+	return metav1.ObjectMeta{
+		Namespace: namespace,
+		Name:      name,
+	}
+}
+
+// LabelSelector creates a LabelSelector for label matching.
+func LabelSelector(labels map[string]string) metav1.LabelSelector {
+	return metav1.LabelSelector{
+		MatchLabels: labels,
+	}
+}
+
+// MustParseQuantity parses a resource quantity string, panicking on error.
+func MustParseQuantity(q string) resource.Quantity {
+	quantity, err := resource.ParseQuantity(q)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse quantity %q: %v", q, err))
+	}
+	return quantity
+}
+
+// IntToIntstr converts an int32 to IntOrString for port specifications.
+func IntToIntstr(i int32) intstr.IntOrString {
+	return intstr.FromInt(int(i))
 }
