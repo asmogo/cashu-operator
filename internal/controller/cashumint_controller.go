@@ -35,6 +35,8 @@ import (
 
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 	"github.com/asmogo/cashu-operator/internal/controller/generators"
+	"github.com/asmogo/cashu-operator/internal/resources"
+	"github.com/asmogo/cashu-operator/internal/status"
 )
 
 const (
@@ -50,7 +52,9 @@ const (
 // CashuMintReconciler reconciles a CashuMint object
 type CashuMintReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme        *runtime.Scheme
+	statusManager *status.Manager
+	applier       *resources.Applier
 }
 
 // +kubebuilder:rbac:groups=mint.cashu.asmogo.github.io,resources=cashumints,verbs=get;list;watch;create;update;patch;delete
@@ -69,6 +73,14 @@ type CashuMintReconciler struct {
 // move the current state of the cluster closer to the desired state.
 func (r *CashuMintReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+
+	// Initialize managers on first use
+	if r.statusManager == nil {
+		r.statusManager = status.NewManager(r.Client)
+	}
+	if r.applier == nil {
+		r.applier = resources.NewApplier(r.Client, r.Scheme)
+	}
 
 	// Fetch the CashuMint instance
 	cashuMint := &mintv1alpha1.CashuMint{}
@@ -101,15 +113,14 @@ func (r *CashuMintReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Initialize status if needed
 	if cashuMint.Status.Phase == "" {
-		cashuMint.Status.Phase = mintv1alpha1.MintPhasePending
-		if err := r.Status().Update(ctx, cashuMint); err != nil {
-			logger.Error(err, "Failed to update status to Pending")
+		if err := r.statusManager.SetPhase(ctx, cashuMint, mintv1alpha1.MintPhasePending); err != nil {
+			logger.Error(err, "Failed to set phase to Pending")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Main reconciliation logic - will be implemented in subsequent tasks
+	// Main reconciliation logic
 	result, err := r.reconcileResources(ctx, cashuMint)
 	if err != nil {
 		return r.handleError(ctx, cashuMint, err)
@@ -151,27 +162,17 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 
 	// Update phase to Provisioning if currently Pending
 	if cashuMint.Status.Phase == mintv1alpha1.MintPhasePending {
-		cashuMint.Status.Phase = mintv1alpha1.MintPhaseProvisioning
-		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-			Type:               mintv1alpha1.ConditionTypeReady,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: cashuMint.Generation,
-			Reason:             "Provisioning",
-			Message:            "Starting resource provisioning",
-		})
+		if err := r.statusManager.SetProvisioning(ctx, cashuMint); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set provisioning phase: %w", err)
+		}
 	}
 
 	// Check if spec has changed (generation mismatch)
 	if cashuMint.Status.ObservedGeneration != 0 && cashuMint.Status.ObservedGeneration != cashuMint.Generation {
 		logger.Info("Spec changed, updating resources")
-		cashuMint.Status.Phase = mintv1alpha1.MintPhaseUpdating
-		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-			Type:               mintv1alpha1.ConditionTypeReady,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: cashuMint.Generation,
-			Reason:             "Updating",
-			Message:            "Updating resources due to spec change",
-		})
+		if err := r.statusManager.SetUpdating(ctx, cashuMint); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to set updating phase: %w", err)
+		}
 	}
 
 	// Phase 1: Reconcile PostgreSQL auto-provisioning (if needed)
@@ -219,15 +220,10 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 	// Check deployment readiness and update phase
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}, deployment); err == nil {
-		if isDeploymentReady(deployment) {
-			cashuMint.Status.Phase = mintv1alpha1.MintPhaseReady
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeReady,
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "ReconciliationComplete",
-				Message:            "All resources reconciled successfully",
-			})
+		if status.IsDeploymentReady(deployment) {
+			if err := r.statusManager.SetReady(ctx, cashuMint, "All resources reconciled successfully"); err != nil {
+				logger.Error(err, "Failed to set ready phase")
+			}
 		} else {
 			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
 				Type:               mintv1alpha1.ConditionTypeReady,
@@ -264,17 +260,8 @@ func (r *CashuMintReconciler) handleError(ctx context.Context, cashuMint *mintv1
 		return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, nil
 	}
 
-	// Update status with error
-	cashuMint.Status.Phase = mintv1alpha1.MintPhaseFailed
-	meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-		Type:               mintv1alpha1.ConditionTypeReady,
-		Status:             metav1.ConditionFalse,
-		ObservedGeneration: cashuMint.Generation,
-		Reason:             "ReconciliationFailed",
-		Message:            err.Error(),
-	})
-
-	if updateErr := r.Status().Update(ctx, cashuMint); updateErr != nil {
+	// Update status with error using status manager
+	if updateErr := r.statusManager.SetError(ctx, cashuMint, err); updateErr != nil {
 		logger.Error(updateErr, "Failed to update status after error")
 	}
 
@@ -286,14 +273,9 @@ func (r *CashuMintReconciler) handleError(ctx context.Context, cashuMint *mintv1
 func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
-	// Get current deployment status
-	deployment := &appsv1.Deployment{}
-	deploymentKey := client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}
-	if err := r.Get(ctx, deploymentKey, deployment); err == nil {
-		cashuMint.Status.ReadyReplicas = deployment.Status.ReadyReplicas
-		cashuMint.Status.DeploymentName = deployment.Name
-	} else if !apierrors.IsNotFound(err) {
-		logger.Error(err, "Failed to get Deployment for status update")
+	// Update deployment status
+	if err := r.statusManager.UpdateDeploymentStatus(ctx, cashuMint); err != nil {
+		logger.Error(err, "Failed to update deployment status")
 	}
 
 	// Get service status
@@ -305,40 +287,9 @@ func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv
 		logger.Error(err, "Failed to get Service for status update")
 	}
 
-	// Get ingress status
-	if cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled {
-		ingress := &networkingv1.Ingress{}
-		ingressKey := client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}
-		if err := r.Get(ctx, ingressKey, ingress); err == nil {
-			cashuMint.Status.IngressName = ingress.Name
-
-			// Set URL based on ingress
-			if len(ingress.Status.LoadBalancer.Ingress) > 0 {
-				if ingress.Spec.TLS != nil && len(ingress.Spec.TLS) > 0 {
-					cashuMint.Status.URL = "https://" + cashuMint.Spec.Ingress.Host
-				} else {
-					cashuMint.Status.URL = "http://" + cashuMint.Spec.Ingress.Host
-				}
-
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-					Type:               mintv1alpha1.ConditionTypeIngressReady,
-					Status:             metav1.ConditionTrue,
-					ObservedGeneration: cashuMint.Generation,
-					Reason:             "IngressReady",
-					Message:            "Ingress is ready and accessible",
-				})
-			} else {
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-					Type:               mintv1alpha1.ConditionTypeIngressReady,
-					Status:             metav1.ConditionFalse,
-					ObservedGeneration: cashuMint.Generation,
-					Reason:             "IngressNotReady",
-					Message:            "Waiting for ingress to be assigned",
-				})
-			}
-		} else if !apierrors.IsNotFound(err) {
-			logger.Error(err, "Failed to get Ingress for status update")
-		}
+	// Update ingress status
+	if err := r.statusManager.UpdateIngressStatus(ctx, cashuMint); err != nil {
+		logger.Error(err, "Failed to update ingress status")
 	}
 
 	// Get ConfigMap status
@@ -351,11 +302,8 @@ func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv
 	}
 
 	// Update observed generation
-	cashuMint.Status.ObservedGeneration = cashuMint.Generation
-
-	// Update status subresource
-	if err := r.Status().Update(ctx, cashuMint); err != nil {
-		logger.Error(err, "Failed to update CashuMint status")
+	if err := r.statusManager.UpdateObservedGeneration(ctx, cashuMint); err != nil {
+		logger.Error(err, "Failed to update observed generation")
 		return err
 	}
 
@@ -388,7 +336,7 @@ func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint
 		return fmt.Errorf("failed to generate PostgreSQL secret: %w", err)
 	}
 	if secret != nil {
-		if err := applyResource(ctx, r.Client, secret); err != nil {
+		if err := r.applier.ApplyWithOwner(ctx, cashuMint, secret); err != nil {
 			return fmt.Errorf("failed to apply PostgreSQL secret: %w", err)
 		}
 		logger.Info("PostgreSQL secret reconciled", "secret", secret.Name)
@@ -400,7 +348,7 @@ func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint
 		return fmt.Errorf("failed to generate PostgreSQL service: %w", err)
 	}
 	if service != nil {
-		if err := applyResource(ctx, r.Client, service); err != nil {
+		if err := r.applier.ApplyWithOwner(ctx, cashuMint, service); err != nil {
 			return fmt.Errorf("failed to apply PostgreSQL service: %w", err)
 		}
 		logger.Info("PostgreSQL service reconciled", "service", service.Name)
@@ -412,28 +360,20 @@ func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint
 		return fmt.Errorf("failed to generate PostgreSQL StatefulSet: %w", err)
 	}
 	if sts != nil {
-		if err := applyResource(ctx, r.Client, sts); err != nil {
+		if err := r.applier.ApplyWithOwner(ctx, cashuMint, sts); err != nil {
 			return fmt.Errorf("failed to apply PostgreSQL StatefulSet: %w", err)
 		}
 		logger.Info("PostgreSQL StatefulSet reconciled", "statefulset", sts.Name)
 
 		// Check if StatefulSet is ready
-		if isStatefulSetReady(sts) {
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeDatabaseReady,
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "PostgreSQLReady",
-				Message:            "PostgreSQL database is ready",
-			})
+		if status.IsStatefulSetReady(sts) {
+			if err := r.statusManager.SetDatabaseReady(ctx, cashuMint); err != nil {
+				logger.Error(err, "Failed to set database ready condition")
+			}
 		} else {
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeDatabaseReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "PostgreSQLNotReady",
-				Message:            "Waiting for PostgreSQL to be ready",
-			})
+			if err := r.statusManager.SetDatabaseNotReady(ctx, cashuMint, "PostgreSQLNotReady", "Waiting for PostgreSQL to be ready"); err != nil {
+				logger.Error(err, "Failed to set database not ready condition")
+			}
 		}
 	}
 
@@ -471,19 +411,15 @@ func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint 
 		return fmt.Errorf("failed to generate ConfigMap: %w", err)
 	}
 
-	if err := applyResource(ctx, r.Client, configMap); err != nil {
+	if err := r.applier.ApplyWithOwner(ctx, cashuMint, configMap); err != nil {
 		return fmt.Errorf("failed to apply ConfigMap: %w", err)
 	}
 
 	logger.Info("ConfigMap reconciled", "configmap", configMap.Name)
 
-	meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-		Type:               mintv1alpha1.ConditionTypeConfigValid,
-		Status:             metav1.ConditionTrue,
-		ObservedGeneration: cashuMint.Generation,
-		Reason:             "ConfigurationValid",
-		Message:            "Configuration is valid and applied",
-	})
+	if err := r.statusManager.SetConfigValid(ctx, cashuMint); err != nil {
+		logger.Error(err, "Failed to set config valid condition")
+	}
 
 	return nil
 }
@@ -498,7 +434,7 @@ func (r *CashuMintReconciler) reconcilePVC(ctx context.Context, cashuMint *mintv
 	}
 
 	if pvc != nil {
-		if err := applyResource(ctx, r.Client, pvc); err != nil {
+		if err := r.applier.ApplyWithOwner(ctx, cashuMint, pvc); err != nil {
 			return fmt.Errorf("failed to apply PVC: %w", err)
 		}
 		logger.Info("PVC reconciled", "pvc", pvc.Name)
@@ -520,14 +456,14 @@ func (r *CashuMintReconciler) reconcileDeployment(ctx context.Context, cashuMint
 		return fmt.Errorf("failed to get ConfigMap for hash calculation: %w", err)
 	}
 
-	configHash := calculateConfigHash(configMap)
+	configHash := resources.ConfigMapHash(configMap)
 
 	deployment, err := generators.GenerateDeployment(cashuMint, configHash, r.Scheme)
 	if err != nil {
 		return fmt.Errorf("failed to generate Deployment: %w", err)
 	}
 
-	if err := applyResource(ctx, r.Client, deployment); err != nil {
+	if err := r.applier.ApplyWithOwner(ctx, cashuMint, deployment); err != nil {
 		return fmt.Errorf("failed to apply Deployment: %w", err)
 	}
 
@@ -545,7 +481,7 @@ func (r *CashuMintReconciler) reconcileService(ctx context.Context, cashuMint *m
 		return fmt.Errorf("failed to generate Service: %w", err)
 	}
 
-	if err := applyResource(ctx, r.Client, service); err != nil {
+	if err := r.applier.ApplyWithOwner(ctx, cashuMint, service); err != nil {
 		return fmt.Errorf("failed to apply Service: %w", err)
 	}
 
@@ -564,7 +500,7 @@ func (r *CashuMintReconciler) reconcileIngress(ctx context.Context, cashuMint *m
 	}
 
 	if ingress != nil {
-		if err := applyResource(ctx, r.Client, ingress); err != nil {
+		if err := r.applier.ApplyWithOwner(ctx, cashuMint, ingress); err != nil {
 			return fmt.Errorf("failed to apply Ingress: %w", err)
 		}
 		logger.Info("Ingress reconciled", "ingress", ingress.Name)

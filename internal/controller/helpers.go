@@ -18,8 +18,6 @@ package controller
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -32,21 +30,15 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+
+	"github.com/asmogo/cashu-operator/internal/resources"
+	"github.com/asmogo/cashu-operator/internal/status"
 )
 
-// calculateConfigHash calculates a SHA256 hash of the ConfigMap data
+// calculateConfigHash calculates a SHA256 hash of the ConfigMap data.
+// DEPRECATED: Use resources.ConfigMapHash instead.
 func calculateConfigHash(configMap *corev1.ConfigMap) string {
-	if configMap == nil || configMap.Data == nil {
-		return ""
-	}
-
-	hash := sha256.New()
-	// Hash the config.toml content
-	if configToml, ok := configMap.Data["config.toml"]; ok {
-		hash.Write([]byte(configToml))
-	}
-
-	return hex.EncodeToString(hash.Sum(nil))
+	return resources.ConfigMapHash(configMap)
 }
 
 // ensureOwnerReference sets the owner reference on a dependent object
@@ -62,78 +54,34 @@ func ensureOwnerReference(owner, dependent metav1.Object, scheme *runtime.Scheme
 	return controllerutil.SetControllerReference(ownerObj.(client.Object), dependentObj.(client.Object), scheme)
 }
 
-// isDeploymentReady checks if a Deployment is ready
+// isDeploymentReady checks if a Deployment is ready.
+// DEPRECATED: Use status.IsDeploymentReady instead.
 func isDeploymentReady(deployment *appsv1.Deployment) bool {
-	if deployment == nil {
-		return false
-	}
-
-	// Check if the deployment has the desired number of replicas
-	if deployment.Spec.Replicas == nil {
-		return false
-	}
-
-	desiredReplicas := *deployment.Spec.Replicas
-
-	// All replicas must be ready and updated
-	return deployment.Status.ReadyReplicas == desiredReplicas &&
-		deployment.Status.UpdatedReplicas == desiredReplicas &&
-		deployment.Status.AvailableReplicas == desiredReplicas
+	return status.IsDeploymentReady(deployment)
 }
 
-// isStatefulSetReady checks if a StatefulSet is ready
+// isStatefulSetReady checks if a StatefulSet is ready.
+// DEPRECATED: Use status.IsStatefulSetReady instead.
 func isStatefulSetReady(sts *appsv1.StatefulSet) bool {
-	if sts == nil {
-		return false
-	}
-
-	if sts.Spec.Replicas == nil {
-		return false
-	}
-
-	desiredReplicas := *sts.Spec.Replicas
-
-	return sts.Status.ReadyReplicas == desiredReplicas &&
-		sts.Status.CurrentReplicas == desiredReplicas &&
-		sts.Status.UpdatedReplicas == desiredReplicas
+	return status.IsStatefulSetReady(sts)
 }
 
-// isServiceReady checks if a Service is ready
+// isServiceReady checks if a Service is ready.
+// DEPRECATED: Use status.IsServiceReady instead.
 func isServiceReady(service *corev1.Service) bool {
-	if service == nil {
-		return false
-	}
-
-	// For ClusterIP and NodePort services, they're ready once created
-	if service.Spec.Type == corev1.ServiceTypeClusterIP ||
-		service.Spec.Type == corev1.ServiceTypeNodePort {
-		return service.Spec.ClusterIP != ""
-	}
-
-	// For LoadBalancer services, check if external IP is assigned
-	if service.Spec.Type == corev1.ServiceTypeLoadBalancer {
-		return len(service.Status.LoadBalancer.Ingress) > 0
-	}
-
-	return true
+	return status.IsServiceReady(service)
 }
 
-// isIngressReady checks if an Ingress is ready
+// isIngressReady checks if an Ingress is ready.
+// DEPRECATED: Use status.IsIngressReady instead.
 func isIngressReady(ingress *networkingv1.Ingress) bool {
-	if ingress == nil {
-		return false
-	}
-
-	// Check if load balancer IP/hostname is assigned
-	return len(ingress.Status.LoadBalancer.Ingress) > 0
+	return status.IsIngressReady(ingress)
 }
 
-// isPVCBound checks if a PVC is bound
+// isPVCBound checks if a PVC is bound.
+// DEPRECATED: Use status.IsPVCBound instead.
 func isPVCBound(pvc *corev1.PersistentVolumeClaim) bool {
-	if pvc == nil {
-		return false
-	}
-	return pvc.Status.Phase == corev1.ClaimBound
+	return status.IsPVCBound(pvc)
 }
 
 // waitForPostgreSQLReady waits for PostgreSQL StatefulSet to be ready
