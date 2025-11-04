@@ -18,6 +18,7 @@ package reconcilers
 
 import (
 	"context"
+	"fmt"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -90,34 +91,112 @@ func (cr *CompositeReconciler) Name() string {
 }
 
 // DelegatingReconciler finds and delegates to the appropriate reconciler based on configuration.
-// This pattern is useful for selecting implementations at runtime.
+// This pattern is useful for selecting implementations at runtime based on the CashuMint spec.
+// It supports both DatabaseReconciler and LightningReconciler implementations.
 type DelegatingReconciler struct {
-	candidates []interface{} // Can be DatabaseReconciler or LightningReconciler
-	name       string
+	candidates     []interface{} // Can be DatabaseReconciler or LightningReconciler
+	name           string
+	reconcilerType string // "database" or "lightning"
 }
 
 // NewDatabaseDelegatingReconciler creates a new delegating reconciler for databases.
+// It accepts multiple DatabaseReconciler implementations and selects the appropriate one
+// based on the CashuMint's database configuration at reconciliation time.
+//
+// Example usage:
+//
+//	delegator := NewDatabaseDelegatingReconciler(
+//	    NewPostgreSQLReconciler(client, statusMgr, applier),
+//	    NewSQLiteReconciler(client, statusMgr, applier),
+//	)
 func NewDatabaseDelegatingReconciler(candidates ...DatabaseReconciler) *DelegatingReconciler {
 	delegateCandidates := make([]interface{}, len(candidates))
 	for i, c := range candidates {
 		delegateCandidates[i] = c
 	}
 	return &DelegatingReconciler{
-		candidates: delegateCandidates,
-		name:       "DatabaseDelegate",
+		candidates:     delegateCandidates,
+		name:           "DatabaseDelegate",
+		reconcilerType: "database",
 	}
 }
 
 // NewLightningDelegatingReconciler creates a new delegating reconciler for Lightning.
+// It accepts multiple LightningReconciler implementations and selects the appropriate one
+// based on the CashuMint's lightning configuration at reconciliation time.
+//
+// Example usage:
+//
+//	delegator := NewLightningDelegatingReconciler(
+//	    NewLNDReconciler(client, statusMgr, applier),
+//	    NewCLNReconciler(client, statusMgr, applier),
+//	    NewLNbitsReconciler(client, statusMgr, applier),
+//	)
 func NewLightningDelegatingReconciler(candidates ...LightningReconciler) *DelegatingReconciler {
 	delegateCandidates := make([]interface{}, len(candidates))
 	for i, c := range candidates {
 		delegateCandidates[i] = c
 	}
 	return &DelegatingReconciler{
-		candidates: delegateCandidates,
-		name:       "LightningDelegate",
+		candidates:     delegateCandidates,
+		name:           "LightningDelegate",
+		reconcilerType: "lightning",
 	}
+}
+
+// Reconcile delegates to the appropriate reconciler based on the CashuMint configuration.
+// For database reconcilers, it selects based on the database engine.
+// For lightning reconcilers, it selects based on the lightning backend.
+// Returns an error if no suitable reconciler can be found for the configuration.
+func (dr *DelegatingReconciler) Reconcile(ctx context.Context, mint *mintv1alpha1.CashuMint) (ctrl.Result, error) {
+	switch dr.reconcilerType {
+	case "database":
+		return dr.reconcileDatabaseDelegate(ctx, mint)
+	case "lightning":
+		return dr.reconcileLightningDelegate(ctx, mint)
+	default:
+		return ctrl.Result{}, fmt.Errorf("unknown reconciler type: %s", dr.reconcilerType)
+	}
+}
+
+// reconcileDatabaseDelegate finds and invokes the appropriate database reconciler.
+func (dr *DelegatingReconciler) reconcileDatabaseDelegate(ctx context.Context, mint *mintv1alpha1.CashuMint) (ctrl.Result, error) {
+	if mint.Spec.Database.Engine == "" {
+		return ctrl.Result{}, fmt.Errorf("database engine is not specified")
+	}
+
+	for _, candidate := range dr.candidates {
+		dbReconciler, ok := candidate.(DatabaseReconciler)
+		if !ok {
+			continue
+		}
+
+		if dbReconciler.CanHandle(&mint.Spec.Database) {
+			return dbReconciler.Reconcile(ctx, mint)
+		}
+	}
+
+	return ctrl.Result{}, fmt.Errorf("no suitable database reconciler found for engine: %s", mint.Spec.Database.Engine)
+}
+
+// reconcileLightningDelegate finds and invokes the appropriate lightning reconciler.
+func (dr *DelegatingReconciler) reconcileLightningDelegate(ctx context.Context, mint *mintv1alpha1.CashuMint) (ctrl.Result, error) {
+	if mint.Spec.Lightning.Backend == "" {
+		return ctrl.Result{}, fmt.Errorf("lightning backend is not specified")
+	}
+
+	for _, candidate := range dr.candidates {
+		lnReconciler, ok := candidate.(LightningReconciler)
+		if !ok {
+			continue
+		}
+
+		if lnReconciler.CanHandle(&mint.Spec.Lightning) {
+			return lnReconciler.Reconcile(ctx, mint)
+		}
+	}
+
+	return ctrl.Result{}, fmt.Errorf("no suitable lightning reconciler found for backend: %s", mint.Spec.Lightning.Backend)
 }
 
 // Name returns the name of the delegating reconciler.

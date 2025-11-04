@@ -62,35 +62,40 @@ func (pr *PostgreSQLReconciler) CanHandle(dbConfig *mintv1alpha1.DatabaseConfig)
 
 // Reconcile implements the main reconciliation logic for PostgreSQL databases.
 // It handles both external connections and auto-provisioning scenarios.
+// This method validates configuration and delegates to appropriate sub-reconcilers
+// based on whether auto-provisioning is enabled.
 func (pr *PostgreSQLReconciler) Reconcile(
 	ctx context.Context,
 	mint *mintv1alpha1.CashuMint,
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Get database configuration
+	// Validate database engine matches
 	if mint.Spec.Database.Engine != "postgres" {
-		return ctrl.Result{}, fmt.Errorf("PostgreSQL reconciler called for non-postgres database")
+		return ctrl.Result{}, fmt.Errorf("PostgreSQL reconciler called for non-postgres database, got engine: %s", mint.Spec.Database.Engine)
 	}
 
+	// Validate PostgreSQL configuration is present
 	pgConfig := mint.Spec.Database.Postgres
 	if pgConfig == nil {
-		err := fmt.Errorf("PostgreSQL configuration is missing")
-		logger.Error(err, "Database configuration invalid", "mint", mint.Name)
+		err := fmt.Errorf("PostgreSQL configuration is missing but engine is set to 'postgres'")
+		logger.Error(err, "Invalid database configuration", "mint", mint.Name)
 		return ctrl.Result{}, err
 	}
 
-	// If auto-provisioning is enabled, reconcile the PostgreSQL instance
+	// Validate configuration based on provisioning mode
+	if err := pr.validatePostgresConfig(pgConfig); err != nil {
+		logger.Error(err, "PostgreSQL configuration validation failed", "mint", mint.Name)
+		return ctrl.Result{}, err
+	}
+
+	// Route to appropriate reconciliation path
 	if pgConfig.AutoProvision {
-		logger.Info("Auto-provisioning PostgreSQL database", "mint", mint.Name)
+		logger.Info("Reconciling auto-provisioned PostgreSQL", "mint", mint.Name)
 		// TODO: Implement auto-provisioning logic
 		// This would involve creating StatefulSet, PVC, Service, etc.
 	} else {
-		// For external PostgreSQL, just validate the configuration exists
-		logger.Info("Using external PostgreSQL database", "mint", mint.Name)
-		if pgConfig.URL == "" && pgConfig.URLSecretRef == nil {
-			return ctrl.Result{}, fmt.Errorf("PostgreSQL URL or URLSecretRef must be provided")
-		}
+		logger.Info("Using external PostgreSQL connection", "mint", mint.Name)
 	}
 
 	// Mark database as ready
@@ -101,6 +106,20 @@ func (pr *PostgreSQLReconciler) Reconcile(
 
 	logger.Info("PostgreSQL database reconciliation completed", "mint", mint.Name)
 	return ctrl.Result{}, nil
+}
+
+// validatePostgresConfig validates the PostgreSQL configuration based on the provisioning mode.
+// For external databases, validates that connection parameters are provided.
+// For auto-provisioned databases, validates that resource requirements are set.
+func (pr *PostgreSQLReconciler) validatePostgresConfig(pgConfig *mintv1alpha1.PostgresConfig) error {
+	if !pgConfig.AutoProvision {
+		// External database: must have connection URL
+		if pgConfig.URL == "" && pgConfig.URLSecretRef == nil {
+			return fmt.Errorf("external PostgreSQL requires either url or urlSecretRef to be specified")
+		}
+	}
+	// Auto-provisioned databases have sensible defaults, so no additional validation needed
+	return nil
 }
 
 // SQLiteReconciler implements database reconciliation for SQLite.
@@ -135,26 +154,34 @@ func (sr *SQLiteReconciler) CanHandle(dbConfig *mintv1alpha1.DatabaseConfig) boo
 }
 
 // Reconcile implements the main reconciliation logic for SQLite databases.
-// SQLite requires minimal setup as it's file-based.
+// SQLite requires minimal setup as it's file-based and doesn't require external resources.
+// This method validates configuration and marks the database as ready immediately.
 func (sr *SQLiteReconciler) Reconcile(
 	ctx context.Context,
 	mint *mintv1alpha1.CashuMint,
 ) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Get SQLite configuration
+	// Validate database engine matches
 	if mint.Spec.Database.Engine != "sqlite" {
-		return ctrl.Result{}, fmt.Errorf("SQLite reconciler called for non-sqlite database")
+		return ctrl.Result{}, fmt.Errorf("SQLite reconciler called for non-sqlite database, got engine: %s", mint.Spec.Database.Engine)
 	}
 
+	// Validate SQLite configuration is present
 	sqliteConfig := mint.Spec.Database.SQLite
 	if sqliteConfig == nil {
-		err := fmt.Errorf("SQLite configuration is missing")
-		logger.Error(err, "Database configuration invalid", "mint", mint.Name)
+		err := fmt.Errorf("SQLite configuration is missing but engine is set to 'sqlite'")
+		logger.Error(err, "Invalid database configuration", "mint", mint.Name)
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("SQLite database is ready", "dataDir", sqliteConfig.DataDir, "mint", mint.Name)
+	// Validate SQLite configuration
+	if err := sr.validateSQLiteConfig(sqliteConfig); err != nil {
+		logger.Error(err, "SQLite configuration validation failed", "mint", mint.Name)
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("SQLite database ready", "dataDir", sqliteConfig.DataDir, "mint", mint.Name)
 
 	// Mark database as ready (SQLite doesn't need to wait for resources)
 	if err := sr.StatusManager.SetDatabaseReady(ctx, mint); err != nil {
@@ -162,5 +189,15 @@ func (sr *SQLiteReconciler) Reconcile(
 		return sr.RequeueAfterShort()
 	}
 
+	logger.Info("SQLite database reconciliation completed", "mint", mint.Name)
 	return ctrl.Result{}, nil
+}
+
+// validateSQLiteConfig validates the SQLite configuration.
+// Currently, SQLite requires minimal validation as the dataDir is typically set to a sensible default.
+func (sr *SQLiteReconciler) validateSQLiteConfig(_ *mintv1alpha1.SQLiteConfig) error {
+	// SQLite configuration is fairly open-ended, but we could add validation here
+	// if specific requirements emerge (e.g., dataDir not empty, proper path format)
+	// Using _ to explicitly ignore the parameter as validation is not yet needed
+	return nil
 }

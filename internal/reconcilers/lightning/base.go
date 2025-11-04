@@ -138,13 +138,22 @@ func (br *BaseReconciler) GetNamespacedName(namespace, name string) types.Namesp
 }
 
 // RequeueAfterShort returns a requeue result with a short delay.
-// Useful for retrying failed operations quickly.
+// Use this for quick retries on transient errors (e.g., temporary network issues, API failures).
+// Default interval is 5 seconds.
 func (br *BaseReconciler) RequeueAfterShort() (ctrl.Result, error) {
 	return ctrl.Result{RequeueAfter: resources.DefaultRequeueAfterShort}, nil
 }
 
+// RequeueAfterMedium returns a requeue result with a medium delay.
+// Use this for normal operational delays (e.g., waiting for connection establishment).
+// Default interval is 30 seconds.
+func (br *BaseReconciler) RequeueAfterMedium() (ctrl.Result, error) {
+	return ctrl.Result{RequeueAfter: resources.DefaultRequeueAfterMedium}, nil
+}
+
 // RequeueAfterLong returns a requeue result with a long delay.
-// Useful for checking status periodically.
+// Use this for periodic health checks and normal operation (e.g., checking if a node is healthy).
+// Default interval is 2 minutes.
 func (br *BaseReconciler) RequeueAfterLong() (ctrl.Result, error) {
 	return ctrl.Result{RequeueAfter: resources.DefaultRequeueAfterLong}, nil
 }
