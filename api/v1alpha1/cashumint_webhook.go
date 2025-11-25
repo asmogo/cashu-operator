@@ -235,6 +235,28 @@ func (r *CashuMint) Default() {
 		if len(r.Spec.Lightning.GRPCProcessor.SupportedUnits) == 0 {
 			r.Spec.Lightning.GRPCProcessor.SupportedUnits = []string{"sat"}
 		}
+		if r.Spec.Lightning.GRPCProcessor.Port == 0 {
+			r.Spec.Lightning.GRPCProcessor.Port = 50051
+		}
+
+		// Apply defaults for Spark Payment Processor if enabled
+		if r.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor != nil &&
+			r.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.Enabled {
+			spark := r.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor
+
+			if spark.Image == "" {
+				spark.Image = "ghcr.io/thesimplekid/cdk-spark-payment-processor:latest"
+			}
+			if spark.ImagePullPolicy == "" {
+				spark.ImagePullPolicy = "IfNotPresent"
+			}
+			if spark.WorkingDir == "" {
+				spark.WorkingDir = "/data/spark-processor"
+			}
+
+			// Update the reference
+			r.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor = spark
+		}
 	}
 
 	// Apply defaults for LDK Node
@@ -406,11 +428,26 @@ func (r *CashuMint) validateLightning() error {
 		if r.Spec.Lightning.GRPCProcessor == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor is required when backend is grpcprocessor"))
 		} else {
-			if r.Spec.Lightning.GRPCProcessor.Address == "" {
-				errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address is required"))
+			// If Spark processor is enabled, address can be omitted (defaults to localhost)
+			sparkEnabled := r.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor != nil &&
+				r.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.Enabled
+
+			if !sparkEnabled && r.Spec.Lightning.GRPCProcessor.Address == "" {
+				errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address is required when sparkPaymentProcessor is not enabled"))
 			}
-			if r.Spec.Lightning.GRPCProcessor.Port == 0 {
-				errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.port is required"))
+
+			// Validate Spark processor configuration if enabled
+			if sparkEnabled {
+				spark := r.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor
+				if spark.BreezAPIKeySecretRef == nil {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.sparkPaymentProcessor.breezApiKeySecretRef is required when enabled"))
+				}
+				if spark.MnemonicSecretRef == nil {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.sparkPaymentProcessor.mnemonicSecretRef is required when enabled"))
+				}
+				if spark.EnableTLS && spark.TLSSecretRef == nil {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.sparkPaymentProcessor.tlsSecretRef is required when enableTLS is true"))
+				}
 			}
 		}
 	default:

@@ -35,6 +35,7 @@ import (
 
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 	"github.com/asmogo/cashu-operator/internal/controller/generators"
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 )
 
 const (
@@ -63,6 +64,7 @@ type CashuMintReconciler struct {
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -213,6 +215,15 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		logger.Info("Reconciling Ingress")
 		if err := r.reconcileIngress(ctx, cashuMint); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to reconcile Ingress: %w", err)
+		}
+
+		// Phase 7: Reconcile Certificate (if enabled)
+		if cashuMint.Spec.Ingress.TLS != nil && cashuMint.Spec.Ingress.TLS.Enabled &&
+			cashuMint.Spec.Ingress.TLS.CertManager != nil && cashuMint.Spec.Ingress.TLS.CertManager.Enabled {
+			logger.Info("Reconciling Certificate")
+			if err := r.reconcileCertificate(ctx, cashuMint); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to reconcile Certificate: %w", err)
+			}
 		}
 	}
 
@@ -573,6 +584,25 @@ func (r *CashuMintReconciler) reconcileIngress(ctx context.Context, cashuMint *m
 	return nil
 }
 
+// reconcileCertificate reconciles the Certificate for the mint
+func (r *CashuMintReconciler) reconcileCertificate(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	logger := log.FromContext(ctx)
+
+	cert, err := generators.GenerateCertificate(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate Certificate: %w", err)
+	}
+
+	if cert != nil {
+		if err := applyResource(ctx, r.Client, cert); err != nil {
+			return fmt.Errorf("failed to apply Certificate: %w", err)
+		}
+		logger.Info("Certificate reconciled", "certificate", cert.Name)
+	}
+
+	return nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *CashuMintReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
@@ -581,6 +611,7 @@ func (r *CashuMintReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&certmanagerv1.Certificate{}).
 		Named("cashumint").
 		Complete(r)
 }

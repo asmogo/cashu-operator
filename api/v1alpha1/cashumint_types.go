@@ -424,12 +424,16 @@ type FakeWalletConfig struct {
 // GRPCProcessorConfig specifies gRPC payment processor configuration
 type GRPCProcessorConfig struct {
 	// Address is the gRPC processor address
-	Address string `json:"address"`
+	// For auto-deployed Spark processor, defaults to "localhost"
+	// +optional
+	Address string `json:"address,omitempty"`
 
 	// Port is the gRPC processor port
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
+	// +kubebuilder:default=50051
+	// +optional
+	Port int32 `json:"port,omitempty"`
 
 	// SupportedUnits is the list of supported units
 	// +kubebuilder:default={"sat"}
@@ -437,6 +441,62 @@ type GRPCProcessorConfig struct {
 
 	// TLSSecretRef references a Secret containing TLS certificates
 	// If provided, the directory should contain client.crt, client.key, ca.crt
+	// +optional
+	TLSSecretRef *corev1.SecretKeySelector `json:"tlsSecretRef,omitempty"`
+
+	// SparkPaymentProcessor enables automatic deployment of cdk-spark-payment-processor
+	// When enabled, the processor runs as a sidecar container
+	// +optional
+	SparkPaymentProcessor *SparkPaymentProcessorConfig `json:"sparkPaymentProcessor,omitempty"`
+}
+
+// SparkPaymentProcessorConfig specifies Spark payment processor configuration
+type SparkPaymentProcessorConfig struct {
+	// Enabled controls whether the Spark payment processor is deployed
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Image specifies the container image to use
+	// +kubebuilder:default="ghcr.io/thesimplekid/cdk-spark-payment-processor:latest"
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// ImagePullPolicy specifies when to pull the image
+	// +kubebuilder:default="IfNotPresent"
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
+	// +optional
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+
+	// BreezAPIKeySecretRef references a Secret containing the Breez API key
+	// Required when enabled
+	// +optional
+	BreezAPIKeySecretRef *corev1.SecretKeySelector `json:"breezApiKeySecretRef,omitempty"`
+
+	// MnemonicSecretRef references a Secret containing the BIP-39 mnemonic
+	// Required when enabled
+	// +optional
+	MnemonicSecretRef *corev1.SecretKeySelector `json:"mnemonicSecretRef,omitempty"`
+
+	// PassphraseSecretRef references a Secret containing the optional mnemonic passphrase
+	// +optional
+	PassphraseSecretRef *corev1.SecretKeySelector `json:"passphraseSecretRef,omitempty"`
+
+	// WorkingDir is the working directory for all data
+	// +kubebuilder:default="/data/spark-processor"
+	// +optional
+	WorkingDir string `json:"workingDir,omitempty"`
+
+	// Resources specifies compute resource requirements
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// EnableTLS enables TLS for the gRPC server
+	// +optional
+	EnableTLS bool `json:"enableTLS,omitempty"`
+
+	// TLSSecretRef references a Secret containing TLS certificates
+	// Required when EnableTLS is true
+	// Should contain: server.crt, server.key
 	// +optional
 	TLSSecretRef *corev1.SecretKeySelector `json:"tlsSecretRef,omitempty"`
 }

@@ -1,0 +1,161 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cdk-spark
+  namespace: cashu-mints
+spec:
+  image: "docker.io/cashubtc/mintd:latest"
+
+  # Mint info
+  mintInfo:
+    url: "https://spark.ucash.space"
+    name: "Spark Lightning Mint"
+    description: "Cashu mint with Breez SDK Spark payment processor"
+    descriptionLong: "A production-ready Cashu mint using the Spark payment processor for nodeless Lightning operations"
+    listenHost: "0.0.0.0"
+    listenPort: 8085
+    # Mnemonic should be stored in a secret
+    mnemonicSecretRef:
+      name: cashumint-spark-secrets
+      key: mnemonic
+
+  # Database configuration - using auto-provisioned PostgreSQL
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: "20Gi"
+        version: "15"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+
+  # Lightning backend configuration - gRPC processor with Spark
+  lightning:
+    backend: grpcprocessor
+    minMint: 100
+    maxMint: 1000000
+    minMelt: 100
+    maxMelt: 1000000
+    grpcProcessor:
+
+      # Address and port are auto-configured for sidecar
+      address: "http://localhost"  # Optional: will default to localhost when sparkPaymentProcessor is enabled
+      port: 50051
+      supportedUnits:
+        - sat
+      # Enable and configure the Spark payment processor sidecar
+      sparkPaymentProcessor:
+        enabled: true
+        image: "docker.io/asmogo/cdk-stripe-payment-processor:sha-aae46ba"
+        imagePullPolicy: IfNotPresent
+        # Breez API key from secret (required)
+        breezApiKeySecretRef:
+          name: spark-processor-secrets
+          key: breez-api-key
+        # BIP-39 mnemonic from secret (required)
+        mnemonicSecretRef:
+          name: spark-processor-secrets
+          key: mnemonic
+        # Optional: passphrase for mnemonic
+        # passphraseSecretRef:
+        #   name: spark-processor-secrets
+        #   key: passphrase
+        workingDir: "/data/spark-processor"
+        # Resource requirements for the processor
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        # Optional: Enable TLS for gRPC server
+        # enableTLS: false
+        # tlsSecretRef:
+        #   name: spark-tls-secret
+        #   key: server.crt
+
+  # Ingress configuration with TLS
+  ingress:
+    enabled: true
+    className: nginx
+    host: spark.ucash.space
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt
+        issuerKind: ClusterIssuer
+
+  # Service configuration
+  service:
+    type: ClusterIP
+
+  # Resource requirements for the mint
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  # Logging configuration
+  logging:
+    level: info
+    format: json
+
+  # Storage for the mint and processor data
+  storage:
+    size: "10Gi"
+    # storageClassName: standard
+
+  # Security contexts
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    fsGroup: 0
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: false
+    capabilities:
+      drop:
+        - ALL
+
+---
+# Secret for the Spark payment processor
+# This should be created before deploying the CashuMint
+apiVersion: v1
+kind: Secret
+metadata:
+  name: spark-processor-secrets
+  namespace: cashu-mints
+type: Opaque
+stringData:
+  # Replace with your actual Breez API key from https://breez.technology/request-api-key/
+  breez-api-key: ""
+  # Replace with your BIP-39 mnemonic (12 or 24 words)
+  mnemonic: ""
+  # Optional: passphrase for mnemonic
+  # passphrase: "your-optional-passphrase"
+
+---
+# Secret for the mint mnemonic
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cashumint-spark-secrets
+  namespace: cashu-mints
+type: Opaque
+stringData:
+  # Replace with your mint's BIP-39 mnemonic
+  mnemonic: ""

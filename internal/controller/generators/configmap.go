@@ -300,8 +300,24 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 	case "grpcprocessor":
 		if mint.Spec.Lightning.GRPCProcessor != nil {
 			buf.WriteString("\n[grpc_processor]\n")
-			buf.WriteString(fmt.Sprintf("addr = %q\n", mint.Spec.Lightning.GRPCProcessor.Address))
-			buf.WriteString(fmt.Sprintf("port = %d\n", mint.Spec.Lightning.GRPCProcessor.Port))
+
+			// Determine address - use localhost if Spark processor is auto-deployed
+			addr := mint.Spec.Lightning.GRPCProcessor.Address
+			if mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor != nil &&
+				mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.Enabled {
+				addr = "http://localhost"
+			}
+			if addr == "" {
+				addr = "http://localhost" // Default to localhost
+			}
+			buf.WriteString(fmt.Sprintf("addr = %q\n", addr))
+
+			// Determine port
+			port := mint.Spec.Lightning.GRPCProcessor.Port
+			if port == 0 {
+				port = 50051 // Default port
+			}
+			buf.WriteString(fmt.Sprintf("port = %d\n", port))
 
 			// Default supported units
 			supportedUnits := []string{"sat"}
@@ -311,7 +327,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 			units := strings.Join(supportedUnits, `", "`)
 			buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
 
-			// TLS configuration if provided
+			// TLS configuration if provided (for external processors)
 			if mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
 				buf.WriteString("tls_cert_path = \"/secrets/grpc/client.crt\"\n")
 				buf.WriteString("tls_key_path = \"/secrets/grpc/client.key\"\n")
