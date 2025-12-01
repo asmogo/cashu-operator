@@ -89,15 +89,21 @@ func GenerateDeployment(mint *mintv1alpha1.CashuMint, configHash string, scheme 
 
 // generatePodSpec creates the pod specification for the mint
 func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
-	containers := []corev1.Container{
-		generateMintContainer(mint),
+	containers := []corev1.Container{}
+
+	// Add Spark payment processor sidecar if enabled
+	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+		mint.Spec.Lightning.GRPCProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.Enabled {
+		containers = append(containers, generateSparkProcessorContainer(mint))
 	}
 
 	// Add LDK node sidecar if enabled
 	if mint.Spec.LDKNode != nil && mint.Spec.LDKNode.Enabled {
 		containers = append(containers, generateLDKContainer(mint))
 	}
-
+	containers = append(containers, generateMintContainer(mint))
 	podSpec := corev1.PodSpec{
 		Containers:       containers,
 		Volumes:          generateVolumes(mint),
@@ -214,6 +220,160 @@ func generateLDKContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 			RunAsNonRoot:             boolPtr(true),
 		},
 	}
+}
+
+// generateSparkProcessorContainer creates the Spark payment processor sidecar container
+func generateSparkProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
+	sparkConfig := mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor
+
+	// Set defaults
+	image := sparkConfig.Image
+	if image == "" {
+		image = "asmogo/cdk-stripe-payment-processo:latest"
+	}
+
+	imagePullPolicy := sparkConfig.ImagePullPolicy
+	if imagePullPolicy == "" {
+		imagePullPolicy = corev1.PullIfNotPresent
+	}
+
+	port := mint.Spec.Lightning.GRPCProcessor.Port
+	if port == 0 {
+		port = 50051
+	}
+
+	workingDir := sparkConfig.WorkingDir
+	if workingDir == "" {
+		workingDir = "/data/spark-processor"
+	}
+
+	// Build environment variables
+	envVars := []corev1.EnvVar{
+		{
+			Name:  "SERVER_ADDR",
+			Value: "0.0.0.0",
+		},
+		{
+			Name:  "SERVER_PORT",
+			Value: fmt.Sprintf("%d", port),
+		},
+		{
+			Name:  "WORKING_DIR",
+			Value: workingDir,
+		},
+		{
+			Name:  "RUST_LOG",
+			Value: "info",
+		},
+	}
+
+	// Add Breez API key from secret
+	if sparkConfig.BreezAPIKeySecretRef != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "BREEZ_API_KEY",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: sparkConfig.BreezAPIKeySecretRef.Name,
+					},
+					Key: sparkConfig.BreezAPIKeySecretRef.Key,
+				},
+			},
+		})
+	}
+
+	// Add mnemonic from secret
+	if sparkConfig.MnemonicSecretRef != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "BREEZ_MNEMONIC",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: sparkConfig.MnemonicSecretRef.Name,
+					},
+					Key: sparkConfig.MnemonicSecretRef.Key,
+				},
+			},
+		})
+	}
+
+	// Add optional passphrase from secret
+	if sparkConfig.PassphraseSecretRef != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "BREEZ_PASSPHRASE",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: sparkConfig.PassphraseSecretRef.Name,
+					},
+					Key: sparkConfig.PassphraseSecretRef.Key,
+				},
+			},
+		})
+	}
+
+	// Add TLS configuration if enabled
+	if sparkConfig.EnableTLS {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "TLS_ENABLE",
+			Value: "true",
+		})
+		if sparkConfig.TLSSecretRef != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "TLS_CERT_PATH",
+				Value: "/secrets/spark-tls/server.crt",
+			})
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "TLS_KEY_PATH",
+				Value: "/secrets/spark-tls/server.key",
+			})
+		}
+	}
+
+	// Build volume mounts
+	volumeMounts := []corev1.VolumeMount{
+		{
+			Name:      "data",
+			MountPath: workingDir,
+			SubPath:   "spark-processor",
+		},
+	}
+
+	// Add TLS secret volume mount if needed
+	if sparkConfig.EnableTLS && sparkConfig.TLSSecretRef != nil {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "spark-tls",
+			MountPath: "/secrets/spark-tls",
+			ReadOnly:  true,
+		})
+	}
+
+	// Build container
+	container := corev1.Container{
+		Name:            "spark-processor",
+		Image:           image,
+		ImagePullPolicy: imagePullPolicy,
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "grpc",
+				ContainerPort: port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		Env:          envVars,
+		VolumeMounts: volumeMounts,
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			RunAsNonRoot:             boolPtr(false),
+		},
+	}
+
+	// Add resource requirements if specified
+	if sparkConfig.Resources != nil {
+		container.Resources = *sparkConfig.Resources
+	}
+
+	return container
 }
 
 // generateEnvironmentVariables creates environment variables for the mint container
@@ -465,6 +625,23 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: mint.Spec.Lightning.GRPCProcessor.TLSSecretRef.Name,
+				},
+			},
+		})
+	}
+
+	// Spark payment processor TLS volume
+	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+		mint.Spec.Lightning.GRPCProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.Enabled &&
+		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.EnableTLS &&
+		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.TLSSecretRef != nil {
+		volumes = append(volumes, corev1.Volume{
+			Name: "spark-tls",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.TLSSecretRef.Name,
 				},
 			},
 		})
