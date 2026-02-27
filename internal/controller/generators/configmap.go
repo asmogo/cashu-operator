@@ -68,10 +68,12 @@ func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme, dbP
 
 // generateConfigToml generates the TOML configuration content.
 // dbPassword is the postgres password for auto-provisioned databases (can be empty if not applicable).
+// Field names are taken directly from the CDK cdk-mintd config.rs structs.
 func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string, error) {
 	var buf bytes.Buffer
 
 	// [info] section
+	// Fields: url, listen_host, listen_port, mnemonic (via env), http_cache (nested), logging (nested)
 	buf.WriteString("[info]\n")
 	buf.WriteString(fmt.Sprintf("url = %q\n", mint.Spec.MintInfo.URL))
 
@@ -87,9 +89,38 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 	}
 	buf.WriteString(fmt.Sprintf("listen_port = %d\n", listenPort))
 
-	// Mnemonic is loaded via environment variable for security
-	if mint.Spec.MintInfo.MnemonicSecretRef != nil {
-		buf.WriteString("# Mnemonic loaded from secret via CDK_MINTD_MNEMONIC environment variable\n")
+	// Mnemonic is injected via CDK_MINTD_MNEMONIC environment variable; no inline value here.
+
+	// [info.http_cache] — nested under [info], not a top-level section
+	if mint.Spec.HTTPCache != nil {
+		backend := mint.Spec.HTTPCache.Backend
+		if backend == "" {
+			backend = "memory"
+		}
+		buf.WriteString("\n[info.http_cache]\n")
+		buf.WriteString(fmt.Sprintf("backend = %q\n", backend))
+
+		if mint.Spec.HTTPCache.TTL != nil {
+			buf.WriteString(fmt.Sprintf("ttl = %d\n", *mint.Spec.HTTPCache.TTL))
+		}
+		if mint.Spec.HTTPCache.TTI != nil {
+			buf.WriteString(fmt.Sprintf("tti = %d\n", *mint.Spec.HTTPCache.TTI))
+		}
+		if mint.Spec.HTTPCache.Backend == "redis" && mint.Spec.HTTPCache.Redis != nil {
+			if mint.Spec.HTTPCache.Redis.KeyPrefix != "" {
+				buf.WriteString(fmt.Sprintf("key_prefix = %q\n", mint.Spec.HTTPCache.Redis.KeyPrefix))
+			}
+			// connection_string injected via REDIS_CONNECTION_STRING env var
+		}
+	}
+
+	// [info.logging] — nested under [info]
+	if mint.Spec.Logging != nil {
+		buf.WriteString("\n[info.logging]\n")
+		buf.WriteString("output = \"stderr\"\n")
+		if mint.Spec.Logging.Level != "" {
+			buf.WriteString(fmt.Sprintf("console_level = %q\n", mint.Spec.Logging.Level))
+		}
 	}
 
 	// [mint_info] section
@@ -100,7 +131,6 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		mint.Spec.MintInfo.TosURL != "" || mint.Spec.MintInfo.InputFeePPK != nil {
 
 		buf.WriteString("\n[mint_info]\n")
-
 		if mint.Spec.MintInfo.Name != "" {
 			buf.WriteString(fmt.Sprintf("name = %q\n", mint.Spec.MintInfo.Name))
 		}
@@ -131,101 +161,86 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		if mint.Spec.MintInfo.InputFeePPK != nil {
 			buf.WriteString(fmt.Sprintf("input_fee_ppk = %d\n", *mint.Spec.MintInfo.InputFeePPK))
 		}
-
-		buf.WriteString(fmt.Sprintf("swagger_ui = %t\n", mint.Spec.MintInfo.EnableSwaggerUI))
 	}
 
 	// [database] section
+	// engine: "sqlite" or "postgres" (lowercase, matches DatabaseEngine serde rename_all = "lowercase")
 	buf.WriteString("\n[database]\n")
 	buf.WriteString(fmt.Sprintf("engine = %q\n", mint.Spec.Database.Engine))
 
-	switch mint.Spec.Database.Engine {
-	case "postgres":
-		if mint.Spec.Database.Postgres != nil {
-			buf.WriteString("\n[database.postgres]\n")
+	// [database.postgres] — only present when engine = "postgres"
+	// Note: there is NO [database.sqlite] section; sqlite needs no subsection config.
+	if mint.Spec.Database.Engine == "postgres" && mint.Spec.Database.Postgres != nil {
+		buf.WriteString("\n[database.postgres]\n")
 
-			// cdk-mintd requires the database URL to be in the config file
+		if mint.Spec.Database.Postgres.AutoProvision {
+			// Build the URL from the auto-provisioned postgres service and password
+			postgresHost := fmt.Sprintf("%s-postgres", mint.Name)
+			dbURL := fmt.Sprintf("postgresql://cdk:%s@%s:5432/cdk_mintd?sslmode=disable",
+				dbPassword, postgresHost)
+			buf.WriteString(fmt.Sprintf("url = %q\n", dbURL))
+		} else if mint.Spec.Database.Postgres.URL != "" {
+			buf.WriteString(fmt.Sprintf("url = %q\n", mint.Spec.Database.Postgres.URL))
+		}
+		// If URLSecretRef: URL is injected via CDK_MINTD_POSTGRES_URL env var; omit from config.
+
+		tlsMode := mint.Spec.Database.Postgres.TLSMode
+		if tlsMode == "" {
 			if mint.Spec.Database.Postgres.AutoProvision {
-				// Construct the URL for auto-provisioned postgres with password in cleartext
-				postgresHost := fmt.Sprintf("%s-postgres", mint.Name)
-				postgresUser := "cdk"
-				postgresDB := "cdk_mintd"
-				dbURL := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s?sslmode=disable",
-					postgresUser, dbPassword, postgresHost, postgresDB)
-				buf.WriteString(fmt.Sprintf("url = %q\n", dbURL))
-			} else if mint.Spec.Database.Postgres.URL != "" {
-				// Direct URL specified (not recommended for production)
-				buf.WriteString(fmt.Sprintf("url = %q\n", mint.Spec.Database.Postgres.URL))
+				tlsMode = "disable"
 			} else {
-				// URL from secret - commented out as we need the actual URL in the config
-				buf.WriteString("# Database URL must be provided via spec.database.postgres.url or urlSecretRef\n")
-			}
-
-			tlsMode := mint.Spec.Database.Postgres.TLSMode
-			if tlsMode == "" {
-				// Default to 'disable' for auto-provisioned postgres (internal cluster communication)
-				// and 'require' for external postgres
-				if mint.Spec.Database.Postgres.AutoProvision {
-					tlsMode = "disable"
-				} else {
-					tlsMode = "require"
-				}
-			}
-			buf.WriteString(fmt.Sprintf("tls_mode = %q\n", tlsMode))
-
-			if mint.Spec.Database.Postgres.MaxConnections != nil {
-				buf.WriteString(fmt.Sprintf("max_connections = %d\n", *mint.Spec.Database.Postgres.MaxConnections))
-			}
-			if mint.Spec.Database.Postgres.ConnectionTimeoutSeconds != nil {
-				buf.WriteString(fmt.Sprintf("connection_timeout = %d\n", *mint.Spec.Database.Postgres.ConnectionTimeoutSeconds))
+				tlsMode = "require"
 			}
 		}
-	case "sqlite":
-		if mint.Spec.Database.SQLite != nil {
-			buf.WriteString("\n[database.sqlite]\n")
-			dataDir := mint.Spec.Database.SQLite.DataDir
-			if dataDir == "" {
-				dataDir = "/data"
-			}
-			buf.WriteString(fmt.Sprintf("db_file = %q\n", dataDir+"/mint.db"))
+		buf.WriteString(fmt.Sprintf("tls_mode = %q\n", tlsMode))
+
+		if mint.Spec.Database.Postgres.MaxConnections != nil {
+			buf.WriteString(fmt.Sprintf("max_connections = %d\n", *mint.Spec.Database.Postgres.MaxConnections))
 		}
-	case "redb":
-		buf.WriteString("\n[database.redb]\n")
-		buf.WriteString("db_file = \"/data/mint.redb\"\n")
+		if mint.Spec.Database.Postgres.ConnectionTimeoutSeconds != nil {
+			buf.WriteString(fmt.Sprintf("connection_timeout_seconds = %d\n", *mint.Spec.Database.Postgres.ConnectionTimeoutSeconds))
+		}
 	}
 
-	// [ln] section - Lightning backend configuration
+	// [auth_database.postgres] — top-level section (NOT nested under [auth])
+	if mint.Spec.Auth != nil && mint.Spec.Auth.Enabled &&
+		mint.Spec.Auth.Database != nil && mint.Spec.Auth.Database.Postgres != nil {
+		buf.WriteString("\n[auth_database.postgres]\n")
+		// URL injected via CDK_MINTD_AUTH_POSTGRES_URL environment variable
+		buf.WriteString("url = \"\"\n")
+		buf.WriteString("tls_mode = \"disable\"\n")
+	}
+
+	// [ln] section — Lightning backend selector
+	// ln_backend values: "cln", "lnd", "lnbits", "fakewallet", "grpcprocessor", "ldk-node"
 	buf.WriteString("\n[ln]\n")
 	buf.WriteString(fmt.Sprintf("ln_backend = %q\n", mint.Spec.Lightning.Backend))
 
 	if mint.Spec.Lightning.MinMint != nil {
-		buf.WriteString(fmt.Sprintf("min_mint_amount = %d\n", *mint.Spec.Lightning.MinMint))
+		buf.WriteString(fmt.Sprintf("min_mint = %d\n", *mint.Spec.Lightning.MinMint))
 	}
 	if mint.Spec.Lightning.MaxMint != nil {
-		buf.WriteString(fmt.Sprintf("max_mint_amount = %d\n", *mint.Spec.Lightning.MaxMint))
+		buf.WriteString(fmt.Sprintf("max_mint = %d\n", *mint.Spec.Lightning.MaxMint))
 	}
 	if mint.Spec.Lightning.MinMelt != nil {
-		buf.WriteString(fmt.Sprintf("min_melt_amount = %d\n", *mint.Spec.Lightning.MinMelt))
+		buf.WriteString(fmt.Sprintf("min_melt = %d\n", *mint.Spec.Lightning.MinMelt))
 	}
 	if mint.Spec.Lightning.MaxMelt != nil {
-		buf.WriteString(fmt.Sprintf("max_melt_amount = %d\n", *mint.Spec.Lightning.MaxMelt))
+		buf.WriteString(fmt.Sprintf("max_melt = %d\n", *mint.Spec.Lightning.MaxMelt))
 	}
 
-	// Lightning backend specific configuration
+	// Lightning backend-specific sections
 	switch mint.Spec.Lightning.Backend {
 	case "lnd":
 		if mint.Spec.Lightning.LND != nil {
 			buf.WriteString("\n[lnd]\n")
 			buf.WriteString(fmt.Sprintf("address = %q\n", mint.Spec.Lightning.LND.Address))
-
-			// Macaroon and cert paths - these are mounted from secrets
 			if mint.Spec.Lightning.LND.MacaroonSecretRef != nil {
 				buf.WriteString("macaroon_file = \"/secrets/lnd/macaroon\"\n")
 			}
 			if mint.Spec.Lightning.LND.CertSecretRef != nil {
 				buf.WriteString("cert_file = \"/secrets/lnd/cert\"\n")
 			}
-
 			if mint.Spec.Lightning.LND.FeePercent != nil {
 				buf.WriteString(fmt.Sprintf("fee_percent = %f\n", *mint.Spec.Lightning.LND.FeePercent))
 			}
@@ -238,7 +253,6 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		if mint.Spec.Lightning.CLN != nil {
 			buf.WriteString("\n[cln]\n")
 			buf.WriteString(fmt.Sprintf("rpc_path = %q\n", mint.Spec.Lightning.CLN.RPCPath))
-
 			if mint.Spec.Lightning.CLN.FeePercent != nil {
 				buf.WriteString(fmt.Sprintf("fee_percent = %f\n", *mint.Spec.Lightning.CLN.FeePercent))
 			}
@@ -250,11 +264,8 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 	case "lnbits":
 		if mint.Spec.Lightning.LNBits != nil {
 			buf.WriteString("\n[lnbits]\n")
-			buf.WriteString(fmt.Sprintf("api = %q\n", mint.Spec.Lightning.LNBits.API))
-			// API keys loaded from secrets via environment variables
-			buf.WriteString("# admin_api_key loaded from secret via environment variable\n")
-			buf.WriteString("# invoice_api_key loaded from secret via environment variable\n")
-
+			buf.WriteString(fmt.Sprintf("lnbits_api = %q\n", mint.Spec.Lightning.LNBits.API))
+			// admin_api_key and invoice_api_key injected via env vars LNBITS_ADMIN_API_KEY / LNBITS_INVOICE_API_KEY
 			if mint.Spec.Lightning.LNBits.RetroAPI {
 				buf.WriteString("retro_api = true\n")
 			}
@@ -262,15 +273,11 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 
 	case "fakewallet":
 		buf.WriteString("\n[fake_wallet]\n")
-
-		// Set defaults
 		supportedUnits := []string{"sat"}
 		feePercent := 0.02
 		reserveFeeMin := int32(1)
 		minDelayTime := int32(1)
 		maxDelayTime := int32(3)
-
-		// Override with user-specified values if provided
 		if mint.Spec.Lightning.FakeWallet != nil {
 			if len(mint.Spec.Lightning.FakeWallet.SupportedUnits) > 0 {
 				supportedUnits = mint.Spec.Lightning.FakeWallet.SupportedUnits
@@ -288,8 +295,6 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 				maxDelayTime = *mint.Spec.Lightning.FakeWallet.MaxDelayTime
 			}
 		}
-
-		// Write configuration
 		units := strings.Join(supportedUnits, `", "`)
 		buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
 		buf.WriteString(fmt.Sprintf("fee_percent = %f\n", feePercent))
@@ -301,29 +306,25 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		if mint.Spec.Lightning.GRPCProcessor != nil {
 			buf.WriteString("\n[grpc_processor]\n")
 
-			// Determine address - use localhost if a sidecar processor is deployed
+			// addr is a plain hostname/IP — CDK does NOT expect a URL scheme here.
+			// Default to "127.0.0.1" when sidecar is enabled (processor runs on localhost).
 			addr := mint.Spec.Lightning.GRPCProcessor.Address
-			if mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
-				mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled {
-				addr = "http://localhost"
+			sidecarEnabled := mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+				mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled
+			if sidecarEnabled || addr == "" {
+				addr = "127.0.0.1"
 			}
-			if addr == "" {
-				addr = "http://localhost" // Default to localhost
-			}
-			// tonic requires the address to include a URL scheme
-			if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
-				addr = "http://" + addr
-			}
+			// Strip any accidental scheme prefix (the field must be a bare host)
+			addr = strings.TrimPrefix(addr, "http://")
+			addr = strings.TrimPrefix(addr, "https://")
 			buf.WriteString(fmt.Sprintf("addr = %q\n", addr))
 
-			// Determine port
 			port := mint.Spec.Lightning.GRPCProcessor.Port
 			if port == 0 {
-				port = 50051 // Default port
+				port = 50051
 			}
 			buf.WriteString(fmt.Sprintf("port = %d\n", port))
 
-			// Default supported units
 			supportedUnits := []string{"sat"}
 			if len(mint.Spec.Lightning.GRPCProcessor.SupportedUnits) > 0 {
 				supportedUnits = mint.Spec.Lightning.GRPCProcessor.SupportedUnits
@@ -331,73 +332,58 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 			units := strings.Join(supportedUnits, `", "`)
 			buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
 
-			// TLS configuration if provided (for external processors)
+			// tls_dir: CDK expects a directory path containing the certs, not individual file paths.
+			// The secret is mounted as a directory at /secrets/grpc-tls.
 			if mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
-				buf.WriteString("tls_cert_path = \"/secrets/grpc/client.crt\"\n")
-				buf.WriteString("tls_key_path = \"/secrets/grpc/client.key\"\n")
-				buf.WriteString("tls_ca_path = \"/secrets/grpc/ca.crt\"\n")
+				buf.WriteString("tls_dir = \"/secrets/grpc-tls\"\n")
 			}
 		}
 	}
 
-	// [ldk_node] section if enabled
+	// [ldk_node] section
 	if mint.Spec.LDKNode != nil && mint.Spec.LDKNode.Enabled {
 		buf.WriteString("\n[ldk_node]\n")
-		buf.WriteString("enabled = true\n")
-
 		if mint.Spec.LDKNode.FeePercent != nil {
 			buf.WriteString(fmt.Sprintf("fee_percent = %f\n", *mint.Spec.LDKNode.FeePercent))
 		}
 		if mint.Spec.LDKNode.ReserveFeeMin != nil {
 			buf.WriteString(fmt.Sprintf("reserve_fee_min = %d\n", *mint.Spec.LDKNode.ReserveFeeMin))
 		}
-
 		buf.WriteString(fmt.Sprintf("bitcoin_network = %q\n", mint.Spec.LDKNode.BitcoinNetwork))
 		buf.WriteString(fmt.Sprintf("chain_source = %q\n", mint.Spec.LDKNode.ChainSourceType))
-
 		if mint.Spec.LDKNode.EsploraURL != "" {
 			buf.WriteString(fmt.Sprintf("esplora_url = %q\n", mint.Spec.LDKNode.EsploraURL))
 		}
-
 		if mint.Spec.LDKNode.BitcoinRPC != nil {
 			buf.WriteString(fmt.Sprintf("bitcoin_rpc_host = %q\n", mint.Spec.LDKNode.BitcoinRPC.Host))
 			buf.WriteString(fmt.Sprintf("bitcoin_rpc_port = %d\n", mint.Spec.LDKNode.BitcoinRPC.Port))
-			buf.WriteString("# Bitcoin RPC credentials loaded from secrets via environment variables\n")
 		}
-
 		if mint.Spec.LDKNode.StorageDirPath != "" {
 			buf.WriteString(fmt.Sprintf("storage_dir_path = %q\n", mint.Spec.LDKNode.StorageDirPath))
 		}
-
 		host := mint.Spec.LDKNode.Host
 		if host == "" {
 			host = "0.0.0.0"
 		}
 		buf.WriteString(fmt.Sprintf("host = %q\n", host))
-
 		port := mint.Spec.LDKNode.Port
 		if port == 0 {
 			port = 8090
 		}
 		buf.WriteString(fmt.Sprintf("port = %d\n", port))
-
 		if len(mint.Spec.LDKNode.AnnounceAddresses) > 0 {
 			addresses := strings.Join(mint.Spec.LDKNode.AnnounceAddresses, `", "`)
 			buf.WriteString(fmt.Sprintf("announce_addresses = [\"%s\"]\n", addresses))
 		}
-
 		buf.WriteString(fmt.Sprintf("gossip_source = %q\n", mint.Spec.LDKNode.GossipSourceType))
-
 		if mint.Spec.LDKNode.RGSURL != "" {
 			buf.WriteString(fmt.Sprintf("rgs_url = %q\n", mint.Spec.LDKNode.RGSURL))
 		}
-
 		webserverHost := mint.Spec.LDKNode.WebserverHost
 		if webserverHost == "" {
 			webserverHost = "127.0.0.1"
 		}
 		buf.WriteString(fmt.Sprintf("webserver_host = %q\n", webserverHost))
-
 		webserverPort := mint.Spec.LDKNode.WebserverPort
 		if webserverPort == 0 {
 			webserverPort = 8888
@@ -405,22 +391,19 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		buf.WriteString(fmt.Sprintf("webserver_port = %d\n", webserverPort))
 	}
 
-	// [auth] section if enabled
+	// [auth] section
 	if mint.Spec.Auth != nil && mint.Spec.Auth.Enabled {
 		buf.WriteString("\n[auth]\n")
 		buf.WriteString("auth_enabled = true\n")
-
 		if mint.Spec.Auth.OpenIDDiscovery != "" {
 			buf.WriteString(fmt.Sprintf("openid_discovery = %q\n", mint.Spec.Auth.OpenIDDiscovery))
 		}
 		if mint.Spec.Auth.OpenIDClientID != "" {
 			buf.WriteString(fmt.Sprintf("openid_client_id = %q\n", mint.Spec.Auth.OpenIDClientID))
 		}
-
 		if mint.Spec.Auth.MintMaxBat != nil {
 			buf.WriteString(fmt.Sprintf("mint_max_bat = %d\n", *mint.Spec.Auth.MintMaxBat))
 		}
-
 		if mint.Spec.Auth.EnabledMint != nil {
 			buf.WriteString(fmt.Sprintf("enabled_mint = %t\n", *mint.Spec.Auth.EnabledMint))
 		}
@@ -439,44 +422,17 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		if mint.Spec.Auth.EnabledRestore != nil {
 			buf.WriteString(fmt.Sprintf("enabled_restore = %t\n", *mint.Spec.Auth.EnabledRestore))
 		}
-
-		// Auth database configuration
-		if mint.Spec.Auth.Database != nil && mint.Spec.Auth.Database.Postgres != nil {
-			buf.WriteString("\n[auth.database.postgres]\n")
-			buf.WriteString("# Auth database URL loaded from CDK_MINTD_AUTH_POSTGRES_URL environment variable\n")
-		}
 	}
 
-	// [http_cache] section if configured
-	if mint.Spec.HTTPCache != nil {
-		buf.WriteString("\n[http_cache]\n")
-		buf.WriteString(fmt.Sprintf("backend = %q\n", mint.Spec.HTTPCache.Backend))
-
-		if mint.Spec.HTTPCache.TTL != nil {
-			buf.WriteString(fmt.Sprintf("ttl = %d\n", *mint.Spec.HTTPCache.TTL))
-		}
-		if mint.Spec.HTTPCache.TTI != nil {
-			buf.WriteString(fmt.Sprintf("tti = %d\n", *mint.Spec.HTTPCache.TTI))
-		}
-
-		if mint.Spec.HTTPCache.Backend == "redis" && mint.Spec.HTTPCache.Redis != nil {
-			buf.WriteString("\n[http_cache.redis]\n")
-			buf.WriteString(fmt.Sprintf("key_prefix = %q\n", mint.Spec.HTTPCache.Redis.KeyPrefix))
-			buf.WriteString("# Redis connection string loaded from secret via environment variable\n")
-		}
-	}
-
-	// [management_rpc] section if enabled
+	// [mint_management_rpc] section (feature: management-rpc)
+	// Note: CDK struct has no "enabled" field; presence of the section enables it.
 	if mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.Enabled {
-		buf.WriteString("\n[management_rpc]\n")
-		buf.WriteString("enabled = true\n")
-
+		buf.WriteString("\n[mint_management_rpc]\n")
 		address := mint.Spec.ManagementRPC.Address
 		if address == "" {
 			address = "127.0.0.1"
 		}
 		buf.WriteString(fmt.Sprintf("address = %q\n", address))
-
 		port := mint.Spec.ManagementRPC.Port
 		if port == 0 {
 			port = 8086

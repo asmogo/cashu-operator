@@ -289,15 +289,15 @@ func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Cont
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
 		{
-			Name:  "HOME",
+			// CDK_MINTD_WORK_DIR tells cdk-mintd where its work directory is.
+			// The binary looks for config.toml at $CDK_MINTD_WORK_DIR/config.toml,
+			// and stores SQLite DB, logs, and TLS material under this path.
+			// We mount config.toml into /data/config.toml and use /data as work dir.
+			Name:  "CDK_MINTD_WORK_DIR",
 			Value: "/data",
 		},
 		{
-			Name:  "CASHU_CONFIG",
-			Value: "/root/.cdk-mintd/config.toml",
-		},
-		{
-			Name:  "CASHU_DATA_DIR",
+			Name:  "HOME",
 			Value: "/data",
 		},
 	}
@@ -423,8 +423,9 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
 		{
+			// Mount config.toml into the work dir so CDK finds it at $CDK_MINTD_WORK_DIR/config.toml
 			Name:      "config",
-			MountPath: "/root/.cdk-mintd/config.toml",
+			MountPath: "/data/config.toml",
 			SubPath:   "config.toml",
 			ReadOnly:  true,
 		},
