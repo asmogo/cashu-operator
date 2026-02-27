@@ -68,7 +68,13 @@ func (r *CashuMint) Default() {
 	// Apply defaults for PostgreSQL if engine is postgres
 	if r.Spec.Database.Engine == "postgres" && r.Spec.Database.Postgres != nil {
 		if r.Spec.Database.Postgres.TLSMode == "" {
-			r.Spec.Database.Postgres.TLSMode = "require"
+			// Auto-provisioned postgres runs inside the cluster without TLS;
+			// external postgres should use TLS by default.
+			if r.Spec.Database.Postgres.AutoProvision {
+				r.Spec.Database.Postgres.TLSMode = "disable"
+			} else {
+				r.Spec.Database.Postgres.TLSMode = "require"
+			}
 		}
 		if r.Spec.Database.Postgres.MaxConnections == nil {
 			maxConn := int32(20)
