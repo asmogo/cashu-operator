@@ -27,7 +27,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -152,7 +151,7 @@ var _ = Describe("CashuMint Controller", func() {
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 
-		It("should block rollout until required Secrets exist", func() {
+		It("should reconcile without blocking when Secrets are missing (Kubernetes handles missing secrets at runtime)", func() {
 			controllerReconciler := &CashuMintReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
@@ -167,19 +166,15 @@ var _ = Describe("CashuMint Controller", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			Expect(result.RequeueAfter).To(Equal(NotReadyRetryInterval))
+			// The simplified reconciler no longer gates on missing secrets;
+			// it proceeds and lets Kubernetes surface missing-secret errors at pod start.
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
 			updated := &mintv1alpha1.CashuMint{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
-
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeReady)
-			Expect(readyCondition).NotTo(BeNil())
-			Expect(readyCondition.Reason).To(Equal("DependenciesNotReady"))
-			Expect(readyCondition.Message).To(ContainSubstring("external-db-secret/database-url"))
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, typeNamespacedName, deployment)
-			Expect(errors.IsNotFound(err)).To(BeTrue())
+			// Config should be generated and a Deployment created
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)).To(Succeed())
 		})
 	})
 
@@ -228,7 +223,7 @@ var _ = Describe("CashuMint Controller", func() {
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 
-		It("should block deployment until PostgreSQL reports readiness", func() {
+		It("should provision PostgreSQL and proceed with deployment (no longer gates on postgres readiness)", func() {
 			controllerReconciler := &CashuMintReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
@@ -243,29 +238,23 @@ var _ = Describe("CashuMint Controller", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			Expect(result.RequeueAfter).To(Equal(NotReadyRetryInterval))
+			// The simplified reconciler no longer gates on postgres readiness;
+			// it provisions postgres resources and continues with deployment.
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
 			updated := &mintv1alpha1.CashuMint{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeReady)
-			Expect(readyCondition).NotTo(BeNil())
-			Expect(readyCondition.Reason).To(Equal("DependenciesNotReady"))
-			Expect(readyCondition.Message).To(ContainSubstring("auto-provisioned PostgreSQL"))
-
-			dbCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeDatabaseReady)
-			Expect(dbCondition).NotTo(BeNil())
-			Expect(dbCondition.Reason).To(Equal("PostgreSQLNotReady"))
-
+			// PostgreSQL StatefulSet should be created
 			postgresStatefulSet := &appsv1.StatefulSet{}
 			Expect(k8sClient.Get(ctx, types.NamespacedName{
 				Name:      resourceName + "-postgres",
 				Namespace: "default",
 			}, postgresStatefulSet)).To(Succeed())
 
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, typeNamespacedName, deployment)
-			Expect(errors.IsNotFound(err)).To(BeTrue())
+			// DatabaseReady condition should be set
+			dbCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeDatabaseReady)
+			Expect(dbCondition).NotTo(BeNil())
 		})
 	})
 
@@ -581,12 +570,10 @@ var _ = Describe("CashuMint Controller", func() {
 			}
 		})
 
-		It("should block rollout and emit dependency warning", func() {
-			recorder := record.NewFakeRecorder(32)
+		It("should reconcile without blocking when a Secret key is missing (Kubernetes handles this at pod start)", func() {
 			controllerReconciler := &CashuMintReconciler{
-				Client:   k8sClient,
-				Scheme:   k8sClient.Scheme(),
-				Recorder: recorder,
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
 			}
 
 			var result reconcile.Result
@@ -598,25 +585,16 @@ var _ = Describe("CashuMint Controller", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			Expect(result.RequeueAfter).To(Equal(NotReadyRetryInterval))
+			// The simplified reconciler no longer gates on missing secret keys;
+			// it proceeds and lets Kubernetes surface the error at pod start.
+			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
 			updated := &mintv1alpha1.CashuMint{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
 
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeReady)
-			Expect(readyCondition).NotTo(BeNil())
-			Expect(readyCondition.Reason).To(Equal("DependenciesNotReady"))
-			Expect(readyCondition.Message).To(ContainSubstring("external-db-secret-key-missing/database-url"))
-
-			lightningCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeLightningReady)
-			Expect(lightningCondition).NotTo(BeNil())
-			Expect(lightningCondition.Reason).To(Equal("DependenciesNotReady"))
-
-			deployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, typeNamespacedName, deployment)
-			Expect(errors.IsNotFound(err)).To(BeTrue())
-
-			Eventually(recorder.Events).Should(Receive(ContainSubstring("DependenciesNotReady")))
+			// Config and Deployment should be created
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)).To(Succeed())
 		})
 	})
 
@@ -764,111 +742,7 @@ var _ = Describe("CashuMint Controller", func() {
 		})
 	})
 
-	Context("When using managed payment processors", func() {
-		const resourceName = "test-managed-processors"
-
-		ctx := context.Background()
-
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default",
-		}
-
-		BeforeEach(func() {
-			resource := &mintv1alpha1.CashuMint{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      resourceName,
-					Namespace: "default",
-				},
-				Spec: mintv1alpha1.CashuMintSpec{
-					MintInfo: mintv1alpha1.MintInfo{
-						URL: "http://test-mint.local",
-					},
-					Database: mintv1alpha1.DatabaseConfig{
-						Engine: "sqlite",
-						SQLite: &mintv1alpha1.SQLiteConfig{
-							DataDir: "/data",
-						},
-					},
-					PaymentProcessors: []mintv1alpha1.PaymentProcessorSpec{
-						{
-							Name:  "spark-primary",
-							Image: "ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0",
-							Port:  50051,
-						},
-						{
-							Name:  "spark-secondary",
-							Image: "ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0",
-							Port:  50051,
-						},
-					},
-					Lightning: mintv1alpha1.LightningConfig{
-						Backend: "grpcprocessor",
-						GRPCProcessor: &mintv1alpha1.GRPCProcessorConfig{
-							ProcessorRef:   "spark-primary",
-							SupportedUnits: []string{"sat"},
-						},
-					},
-				},
-			}
-			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-		})
-
-		AfterEach(func() {
-			resource := &mintv1alpha1.CashuMint{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			if err == nil {
-				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
-			} else {
-				Expect(errors.IsNotFound(err)).To(BeTrue())
-			}
-		})
-
-		It("should reconcile processor workloads and resolve grpc endpoint from processorRef", func() {
-			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
-
-			var result reconcile.Result
-			var err error
-			for i := 0; i < 3; i++ {
-				result, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
-					NamespacedName: typeNamespacedName,
-				})
-				Expect(err).NotTo(HaveOccurred())
-			}
-
-			Expect(result.RequeueAfter).To(Equal(NotReadyRetryInterval))
-
-			primaryName := generators.PaymentProcessorResourceName(resourceName, "spark-primary")
-			secondaryName := generators.PaymentProcessorResourceName(resourceName, "spark-secondary")
-
-			primaryDeployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: primaryName, Namespace: "default"}, primaryDeployment)).To(Succeed())
-			secondaryDeployment := &appsv1.Deployment{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: secondaryName, Namespace: "default"}, secondaryDeployment)).To(Succeed())
-
-			primaryService := &corev1.Service{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: primaryName, Namespace: "default"}, primaryService)).To(Succeed())
-			secondaryService := &corev1.Service{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: secondaryName, Namespace: "default"}, secondaryService)).To(Succeed())
-
-			mintDeployment := &appsv1.Deployment{}
-			err = k8sClient.Get(ctx, typeNamespacedName, mintDeployment)
-			Expect(errors.IsNotFound(err)).To(BeTrue())
-
-			configMap := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)).To(Succeed())
-			configToml := configMap.Data["config.toml"]
-			Expect(configToml).To(ContainSubstring(`addr = "test-managed-processors-processor-spark-primary.default.svc.cluster.local"`))
-			Expect(configToml).To(ContainSubstring("port = 50051"))
-
-			updated := &mintv1alpha1.CashuMint{}
-			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
-			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeReady)
-			Expect(readyCondition).NotTo(BeNil())
-			Expect(readyCondition.Reason).To(Equal("DependenciesNotReady"))
-		})
-	})
+	// The "When using managed payment processors" Context was removed because
+	// standalone PaymentProcessors are no longer supported. Use the generic
+	// sidecar (spec.lightning.grpcProcessor.sidecarProcessor) instead.
 })

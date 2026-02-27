@@ -21,8 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const DefaultMintImage = "ghcr.io/cashubtc/cdk-mintd:v0.15.0"
-
 // CashuMint is the Schema for the cashumints API
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -41,7 +39,7 @@ type CashuMint struct {
 // CashuMintSpec defines the desired state of CashuMint
 type CashuMintSpec struct {
 	// Image specifies the container image to use
-	// +kubebuilder:default="ghcr.io/cashubtc/cdk-mintd:v0.15.0"
+	// +kubebuilder:default="ghcr.io/cashubtc/cdk-mintd:latest"
 	// +optional
 	Image string `json:"image,omitempty"`
 
@@ -71,11 +69,6 @@ type CashuMintSpec struct {
 
 	// Lightning specifies the Lightning Network backend configuration
 	Lightning LightningConfig `json:"lightning"`
-
-	// PaymentProcessors defines operator-managed payment processor workloads available to this mint.
-	// +kubebuilder:validation:MaxItems=10
-	// +optional
-	PaymentProcessors []PaymentProcessorSpec `json:"paymentProcessors,omitempty"`
 
 	// LDKNode specifies optional LDK node configuration
 	// +optional
@@ -434,20 +427,15 @@ type FakeWalletConfig struct {
 
 // GRPCProcessorConfig specifies gRPC payment processor configuration
 type GRPCProcessorConfig struct {
-	// ProcessorRef references a processor declared in spec.paymentProcessors by name.
-	// When set, address and port are derived from the managed processor Service.
-	// +optional
-	ProcessorRef string `json:"processorRef,omitempty"`
-
-	// Address is the gRPC processor address
-	// Required when processorRef is not set.
+	// Address is the gRPC processor address.
+	// When SidecarProcessor is enabled, this defaults to "localhost".
 	// +optional
 	Address string `json:"address,omitempty"`
 
 	// Port is the gRPC processor port
-	// Required when processorRef is not set.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
+	// +kubebuilder:default=50051
 	// +optional
 	Port int32 `json:"port,omitempty"`
 
@@ -455,56 +443,62 @@ type GRPCProcessorConfig struct {
 	// +kubebuilder:default={"sat"}
 	SupportedUnits []string `json:"supportedUnits,omitempty"`
 
-	// TLSSecretRef references a Secret containing TLS certificates
-	// If provided, the directory should contain client.crt, client.key, ca.crt
+	// TLSSecretRef references a Secret containing TLS certificates for the client connection.
+	// If provided, the secret should contain client.crt, client.key, ca.crt
 	// +optional
 	TLSSecretRef *corev1.SecretKeySelector `json:"tlsSecretRef,omitempty"`
+
+	// SidecarProcessor enables automatic deployment of a gRPC payment processor
+	// as a sidecar container alongside the mint.
+	// +optional
+	SidecarProcessor *SidecarProcessorConfig `json:"sidecarProcessor,omitempty"`
 }
 
-// PaymentProcessorSpec defines an operator-managed payment processor workload.
-type PaymentProcessorSpec struct {
-	// Name identifies the processor and is referenced by spec.lightning.grpcProcessor.processorRef.
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	// +kubebuilder:validation:MaxLength=30
-	Name string `json:"name"`
+// SidecarProcessorConfig configures a generic gRPC payment processor sidecar container.
+// It can be used to run any gRPC processor (e.g. Spark, Stripe, custom) as a sidecar.
+type SidecarProcessorConfig struct {
+	// Enabled controls whether the sidecar processor is deployed
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
 
-	// Image is the container image for the payment processor.
-	Image string `json:"image"`
+	// Image specifies the container image to use for the sidecar processor
+	// +optional
+	Image string `json:"image,omitempty"`
 
-	// ImagePullPolicy specifies when to pull the processor image.
+	// ImagePullPolicy specifies when to pull the image
 	// +kubebuilder:default="IfNotPresent"
 	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
 	// +optional
 	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 
-	// Replicas is the number of processor replicas.
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	// +optional
-	Replicas *int32 `json:"replicas,omitempty"`
-
-	// Port is the gRPC port exposed by the payment processor.
-	// +kubebuilder:default=50051
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	// +optional
-	Port int32 `json:"port,omitempty"`
-
-	// Command overrides the container entrypoint.
+	// Command overrides the container entrypoint
 	// +optional
 	Command []string `json:"command,omitempty"`
 
-	// Args specifies additional container arguments.
+	// Args specifies additional container arguments
 	// +optional
 	Args []string `json:"args,omitempty"`
 
-	// Env specifies environment variables for the payment processor container.
+	// Env specifies environment variables for the sidecar processor container
 	// +optional
 	Env []corev1.EnvVar `json:"env,omitempty"`
 
-	// Resources specifies compute resource requirements for the processor.
+	// WorkingDir is the working directory for the processor's data
+	// +optional
+	WorkingDir string `json:"workingDir,omitempty"`
+
+	// Resources specifies compute resource requirements
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// EnableTLS enables TLS for the gRPC server
+	// +optional
+	EnableTLS bool `json:"enableTLS,omitempty"`
+
+	// TLSSecretRef references a Secret containing server TLS certificates
+	// Required when EnableTLS is true; should contain server.crt and server.key
+	// +optional
+	TLSSecretRef *corev1.SecretKeySelector `json:"tlsSecretRef,omitempty"`
 }
 
 // LDKNodeConfig specifies LDK node configuration

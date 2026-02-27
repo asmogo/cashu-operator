@@ -89,17 +89,22 @@ func GenerateDeployment(mint *mintv1alpha1.CashuMint, configHash string, scheme 
 
 // generatePodSpec creates the pod specification for the mint
 func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
-	containers := []corev1.Container{
-		generateMintContainer(mint),
+	containers := []corev1.Container{}
+
+	// Add generic gRPC processor sidecar if enabled
+	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+		mint.Spec.Lightning.GRPCProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled {
+		containers = append(containers, generateSidecarProcessorContainer(mint))
 	}
 
 	// Add LDK node sidecar if enabled
 	if mint.Spec.LDKNode != nil && mint.Spec.LDKNode.Enabled {
 		containers = append(containers, generateLDKContainer(mint))
 	}
-
+	containers = append(containers, generateMintContainer(mint))
 	podSpec := corev1.PodSpec{
-		InitContainers:   generateInitContainers(mint),
 		Containers:       containers,
 		Volumes:          generateVolumes(mint),
 		ImagePullSecrets: mint.Spec.ImagePullSecrets,
@@ -112,45 +117,11 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	return podSpec
 }
 
-// generateInitContainers creates init containers that fix volume permissions.
-// The mintd image runs as root by default but the operator enforces RunAsUser=1000.
-// This init container ensures the /data volume is owned by the non-root user.
-func generateInitContainers(mint *mintv1alpha1.CashuMint) []corev1.Container {
-	sc := getPodSecurityContext(mint)
-	uid := int64(1000)
-	gid := int64(1000)
-	if sc.RunAsUser != nil {
-		uid = *sc.RunAsUser
-	}
-	if sc.FSGroup != nil {
-		gid = *sc.FSGroup
-	}
-
-	return []corev1.Container{
-		{
-			Name:    "fix-permissions",
-			Image:   "busybox:1.36",
-			Command: []string{"sh", "-c", fmt.Sprintf("chown -R %d:%d /data", uid, gid)},
-			VolumeMounts: []corev1.VolumeMount{
-				{
-					Name:      "data",
-					MountPath: "/data",
-				},
-			},
-			SecurityContext: &corev1.SecurityContext{
-				RunAsUser:    int64Ptr(0),
-				RunAsGroup:   int64Ptr(0),
-				RunAsNonRoot: boolPtr(false),
-			},
-		},
-	}
-}
-
 // generateMintContainer creates the main mint container
 func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	image := mint.Spec.Image
 	if image == "" {
-		image = mintv1alpha1.DefaultMintImage
+		image = "ghcr.io/cashubtc/cdk-mintd:latest"
 	}
 
 	imagePullPolicy := mint.Spec.ImagePullPolicy
@@ -167,7 +138,6 @@ func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 		Name:            "mintd",
 		Image:           image,
 		ImagePullPolicy: imagePullPolicy,
-		Command:         []string{"cdk-mintd", "--config", "/etc/cdk-mintd/config.toml"},
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "api",
@@ -252,6 +222,69 @@ func generateLDKContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	}
 }
 
+// generateSidecarProcessorContainer creates a generic gRPC payment processor sidecar container.
+// It supports any processor image configured via spec.lightning.grpcProcessor.sidecarProcessor.
+func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
+	sidecarConfig := mint.Spec.Lightning.GRPCProcessor.SidecarProcessor
+
+	imagePullPolicy := sidecarConfig.ImagePullPolicy
+	if imagePullPolicy == "" {
+		imagePullPolicy = corev1.PullIfNotPresent
+	}
+
+	port := mint.Spec.Lightning.GRPCProcessor.Port
+	if port == 0 {
+		port = 50051
+	}
+
+	// Build volume mounts - shared data volume and optional TLS
+	volumeMounts := []corev1.VolumeMount{}
+	if sidecarConfig.WorkingDir != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "data",
+			MountPath: sidecarConfig.WorkingDir,
+			SubPath:   "sidecar-processor",
+		})
+	}
+
+	// Add TLS secret volume mount if needed
+	if sidecarConfig.EnableTLS && sidecarConfig.TLSSecretRef != nil {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "sidecar-tls",
+			MountPath: "/secrets/sidecar-tls",
+			ReadOnly:  true,
+		})
+	}
+
+	// Build container - the user provides all env vars, command, and args
+	container := corev1.Container{
+		Name:            "grpc-processor",
+		Image:           sidecarConfig.Image,
+		ImagePullPolicy: imagePullPolicy,
+		Command:         sidecarConfig.Command,
+		Args:            sidecarConfig.Args,
+		Ports: []corev1.ContainerPort{
+			{
+				Name:          "grpc",
+				ContainerPort: port,
+				Protocol:      corev1.ProtocolTCP,
+			},
+		},
+		Env:          sidecarConfig.Env,
+		VolumeMounts: volumeMounts,
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+		},
+	}
+
+	// Add resource requirements if specified
+	if sidecarConfig.Resources != nil {
+		container.Resources = *sidecarConfig.Resources
+	}
+
+	return container
+}
+
 // generateEnvironmentVariables creates environment variables for the mint container
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
@@ -261,7 +294,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 		},
 		{
 			Name:  "CASHU_CONFIG",
-			Value: "/etc/cdk-mintd/config.toml",
+			Value: "/root/.cdk-mintd/config.toml",
 		},
 		{
 			Name:  "CASHU_DATA_DIR",
@@ -300,20 +333,10 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	}
 
 	// Database configuration
+	// Note: For auto-provisioned postgres, the URL with password is written directly into the config file.
+	// For external postgres with URLSecretRef, we still inject via environment variable.
 	if mint.Spec.Database.Engine == "postgres" && mint.Spec.Database.Postgres != nil {
-		if mint.Spec.Database.Postgres.AutoProvision {
-			envVars = append(envVars, corev1.EnvVar{
-				Name: "CDK_MINTD_DATABASE_URL",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: &corev1.SecretKeySelector{
-						LocalObjectReference: corev1.LocalObjectReference{
-							Name: mint.Name + "-postgres-secret",
-						},
-						Key: "database-url",
-					},
-				},
-			})
-		} else if mint.Spec.Database.Postgres.URLSecretRef != nil {
+		if mint.Spec.Database.Postgres.URLSecretRef != nil {
 			envVars = append(envVars, corev1.EnvVar{
 				Name: "CDK_MINTD_DATABASE_URL",
 				ValueFrom: &corev1.EnvVarSource{
@@ -401,7 +424,8 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
 		{
 			Name:      "config",
-			MountPath: "/etc/cdk-mintd",
+			MountPath: "/root/.cdk-mintd/config.toml",
+			SubPath:   "config.toml",
 			ReadOnly:  true,
 		},
 		{
@@ -513,6 +537,23 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: mint.Spec.Lightning.GRPCProcessor.TLSSecretRef.Name,
+				},
+			},
+		})
+	}
+
+	// Sidecar processor TLS volume
+	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+		mint.Spec.Lightning.GRPCProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.EnableTLS &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.TLSSecretRef != nil {
+		volumes = append(volumes, corev1.Volume{
+			Name: "sidecar-tls",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.TLSSecretRef.Name,
 				},
 			},
 		})

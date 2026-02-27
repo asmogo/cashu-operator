@@ -18,7 +18,6 @@ package v1alpha1
 
 import (
 	"fmt"
-	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -52,7 +51,7 @@ func (r *CashuMint) Default() {
 
 	// Apply defaults for Image
 	if r.Spec.Image == "" {
-		r.Spec.Image = DefaultMintImage
+		r.Spec.Image = "ghcr.io/cashubtc/cdk-mintd:latest"
 	}
 
 	// Apply defaults for Replicas
@@ -250,19 +249,18 @@ func (r *CashuMint) Default() {
 		if len(r.Spec.Lightning.GRPCProcessor.SupportedUnits) == 0 {
 			r.Spec.Lightning.GRPCProcessor.SupportedUnits = []string{"sat"}
 		}
-	}
+		if r.Spec.Lightning.GRPCProcessor.Port == 0 {
+			r.Spec.Lightning.GRPCProcessor.Port = 50051
+		}
 
-	for i := range r.Spec.PaymentProcessors {
-		processor := &r.Spec.PaymentProcessors[i]
-		if processor.ImagePullPolicy == "" {
-			processor.ImagePullPolicy = "IfNotPresent"
-		}
-		if processor.Replicas == nil {
-			replicas := int32(1)
-			processor.Replicas = &replicas
-		}
-		if processor.Port == 0 {
-			processor.Port = 50051
+		// Apply defaults for sidecar processor if enabled
+		if r.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+			r.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled {
+			sidecar := r.Spec.Lightning.GRPCProcessor.SidecarProcessor
+			if sidecar.ImagePullPolicy == "" {
+				sidecar.ImagePullPolicy = "IfNotPresent"
+			}
+			r.Spec.Lightning.GRPCProcessor.SidecarProcessor = sidecar
 		}
 	}
 
@@ -306,14 +304,14 @@ func (r *CashuMint) Default() {
 func (r *CashuMint) ValidateCreate() (admission.Warnings, error) {
 	cashumintlog.Info("validate create", "name", r.Name)
 
-	return r.getUpgradeWarnings(), r.validateCashuMint()
+	return nil, r.validateCashuMint()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (r *CashuMint) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	cashumintlog.Info("validate update", "name", r.Name)
 
-	return r.getUpgradeWarnings(), r.validateCashuMint()
+	return nil, r.validateCashuMint()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
@@ -322,19 +320,6 @@ func (r *CashuMint) ValidateDelete() (admission.Warnings, error) {
 
 	// No validation needed for delete
 	return nil, nil
-}
-
-func (r *CashuMint) getUpgradeWarnings() admission.Warnings {
-	var warnings admission.Warnings
-
-	// CDK v0.15 introduces mint DB migrations; surface a warning at admission time.
-	if r.Spec.Database.Engine == "postgres" &&
-		strings.Contains(strings.ToLower(r.Spec.Image), "cdk-mintd:v0.15") {
-		warnings = append(warnings,
-			"CDK v0.15 includes mint database migrations; take a verified backup before rollout.")
-	}
-
-	return warnings
 }
 
 // validateCashuMint performs validation on the CashuMint resource
@@ -356,11 +341,6 @@ func (r *CashuMint) validateCashuMint() error {
 		allErrs = append(allErrs, err)
 	}
 
-	// Validate payment processor configuration
-	if err := r.validatePaymentProcessors(); err != nil {
-		allErrs = append(allErrs, err)
-	}
-
 	// Validate Ingress configuration
 	if err := r.validateIngress(); err != nil {
 		allErrs = append(allErrs, err)
@@ -378,6 +358,48 @@ func (r *CashuMint) validateCashuMint() error {
 
 	if len(allErrs) > 0 {
 		return fmt.Errorf("validation failed: %v", allErrs)
+	}
+
+	return nil
+}
+
+// validateBackup validates the backup configuration
+func (r *CashuMint) validateBackup() error {
+	if r.Spec.Backup == nil || !r.Spec.Backup.Enabled {
+		return nil
+	}
+
+	var errs []error
+
+	if r.Spec.Database.Engine != "postgres" {
+		errs = append(errs, fmt.Errorf("spec.backup.enabled requires spec.database.engine to be postgres"))
+	}
+	if r.Spec.Database.Postgres == nil || !r.Spec.Database.Postgres.AutoProvision {
+		errs = append(errs, fmt.Errorf("spec.backup.enabled currently requires spec.database.postgres.autoProvision=true"))
+	}
+
+	if r.Spec.Backup.Schedule == "" {
+		errs = append(errs, fmt.Errorf("spec.backup.schedule is required when backup is enabled"))
+	}
+
+	if r.Spec.Backup.S3 == nil {
+		errs = append(errs, fmt.Errorf("spec.backup.s3 is required when backup is enabled"))
+	} else {
+		if r.Spec.Backup.S3.Bucket == "" {
+			errs = append(errs, fmt.Errorf("spec.backup.s3.bucket is required"))
+		}
+		if r.Spec.Backup.S3.AccessKeyIDSecretRef.Name == "" ||
+			r.Spec.Backup.S3.AccessKeyIDSecretRef.Key == "" {
+			errs = append(errs, fmt.Errorf("spec.backup.s3.accessKeyIdSecretRef.name and key are required"))
+		}
+		if r.Spec.Backup.S3.SecretAccessKeySecretRef.Name == "" ||
+			r.Spec.Backup.S3.SecretAccessKeySecretRef.Key == "" {
+			errs = append(errs, fmt.Errorf("spec.backup.s3.secretAccessKeySecretRef.name and key are required"))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("backup validation errors: %v", errs)
 	}
 
 	return nil
@@ -455,21 +477,22 @@ func (r *CashuMint) validateLightning() error {
 		if r.Spec.Lightning.GRPCProcessor == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor is required when backend is grpcprocessor"))
 		} else {
-			hasAddress := r.Spec.Lightning.GRPCProcessor.Address != ""
-			hasPort := r.Spec.Lightning.GRPCProcessor.Port != 0
-			if r.Spec.Lightning.GRPCProcessor.ProcessorRef != "" {
-				if hasAddress || hasPort {
-					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address and port must be omitted when processorRef is set"))
+			// If a sidecar processor is enabled, address can be omitted (defaults to localhost)
+			sidecarEnabled := r.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+				r.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled
+
+			if !sidecarEnabled && r.Spec.Lightning.GRPCProcessor.Address == "" {
+				errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address is required when sidecarProcessor is not enabled"))
+			}
+
+			// Validate sidecar processor configuration if enabled
+			if sidecarEnabled {
+				sidecar := r.Spec.Lightning.GRPCProcessor.SidecarProcessor
+				if sidecar.Image == "" {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.sidecarProcessor.image is required when enabled"))
 				}
-				if !r.hasPaymentProcessor(r.Spec.Lightning.GRPCProcessor.ProcessorRef) {
-					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.processorRef %q not found in spec.paymentProcessors", r.Spec.Lightning.GRPCProcessor.ProcessorRef))
-				}
-			} else {
-				if !hasAddress {
-					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address is required"))
-				}
-				if !hasPort {
-					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.port is required"))
+				if sidecar.EnableTLS && sidecar.TLSSecretRef == nil {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.sidecarProcessor.tlsSecretRef is required when enableTLS is true"))
 				}
 			}
 		}
@@ -481,53 +504,6 @@ func (r *CashuMint) validateLightning() error {
 		return fmt.Errorf("lightning validation errors: %v", errs)
 	}
 	return nil
-}
-
-func (r *CashuMint) validatePaymentProcessors() error {
-	if len(r.Spec.PaymentProcessors) == 0 {
-		return nil
-	}
-
-	var errs []error
-	seen := make(map[string]struct{}, len(r.Spec.PaymentProcessors))
-
-	for i := range r.Spec.PaymentProcessors {
-		processor := r.Spec.PaymentProcessors[i]
-		path := fmt.Sprintf("spec.paymentProcessors[%d]", i)
-
-		if processor.Name == "" {
-			errs = append(errs, fmt.Errorf("%s.name is required", path))
-		} else {
-			if _, exists := seen[processor.Name]; exists {
-				errs = append(errs, fmt.Errorf("duplicate payment processor name %q", processor.Name))
-			}
-			seen[processor.Name] = struct{}{}
-
-			resourceName := fmt.Sprintf("%s-processor-%s", r.Name, processor.Name)
-			if len(resourceName) > 63 {
-				errs = append(errs, fmt.Errorf("%s.name %q generates resource name %q longer than 63 characters", path, processor.Name, resourceName))
-			}
-		}
-
-		if processor.Image == "" {
-			errs = append(errs, fmt.Errorf("%s.image is required", path))
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("payment processor validation errors: %v", errs)
-	}
-
-	return nil
-}
-
-func (r *CashuMint) hasPaymentProcessor(name string) bool {
-	for i := range r.Spec.PaymentProcessors {
-		if r.Spec.PaymentProcessors[i].Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 // validateIngress validates the ingress configuration
@@ -572,50 +548,6 @@ func (r *CashuMint) validateResources() error {
 				}
 			}
 		}
-	}
-
-	return nil
-}
-
-// validateBackup validates the backup configuration
-func (r *CashuMint) validateBackup() error {
-	if r.Spec.Backup == nil || !r.Spec.Backup.Enabled {
-		return nil
-	}
-
-	var errs []error
-
-	if r.Spec.Database.Engine != "postgres" {
-		errs = append(errs, fmt.Errorf("spec.backup.enabled requires spec.database.engine to be postgres"))
-	}
-	if r.Spec.Database.Postgres == nil || !r.Spec.Database.Postgres.AutoProvision {
-		errs = append(errs, fmt.Errorf("spec.backup.enabled currently requires spec.database.postgres.autoProvision=true"))
-	}
-
-	if r.Spec.Backup.Schedule == "" {
-		errs = append(errs, fmt.Errorf("spec.backup.schedule is required when backup is enabled"))
-	}
-
-	if r.Spec.Backup.S3 == nil {
-		errs = append(errs, fmt.Errorf("spec.backup.s3 is required when backup is enabled"))
-	} else {
-		if r.Spec.Backup.S3.Bucket == "" {
-			errs = append(errs, fmt.Errorf("spec.backup.s3.bucket is required"))
-		}
-
-		if r.Spec.Backup.S3.AccessKeyIDSecretRef.Name == "" ||
-			r.Spec.Backup.S3.AccessKeyIDSecretRef.Key == "" {
-			errs = append(errs, fmt.Errorf("spec.backup.s3.accessKeyIdSecretRef.name and key are required"))
-		}
-
-		if r.Spec.Backup.S3.SecretAccessKeySecretRef.Name == "" ||
-			r.Spec.Backup.S3.SecretAccessKeySecretRef.Key == "" {
-			errs = append(errs, fmt.Errorf("spec.backup.s3.secretAccessKeySecretRef.name and key are required"))
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("backup validation errors: %v", errs)
 	}
 
 	return nil

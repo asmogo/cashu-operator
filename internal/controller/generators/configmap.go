@@ -29,9 +29,10 @@ import (
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 )
 
-// GenerateConfigMap creates a ConfigMap containing the config.toml for the mint
-func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*corev1.ConfigMap, error) {
-	configToml, err := generateConfigToml(mint)
+// GenerateConfigMap creates a ConfigMap containing the config.toml for the mint.
+// dbPassword is the postgres password for auto-provisioned databases (can be empty if not applicable).
+func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme, dbPassword string) (*corev1.ConfigMap, error) {
+	configToml, err := generateConfigToml(mint, dbPassword)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate config.toml: %w", err)
 	}
@@ -65,8 +66,9 @@ func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*c
 	return configMap, nil
 }
 
-// generateConfigToml generates the TOML configuration content
-func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
+// generateConfigToml generates the TOML configuration content.
+// dbPassword is the postgres password for auto-provisioned databases (can be empty if not applicable).
+func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string, error) {
 	var buf bytes.Buffer
 
 	// [info] section
@@ -142,14 +144,21 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 		if mint.Spec.Database.Postgres != nil {
 			buf.WriteString("\n[database.postgres]\n")
 
-			if mint.Spec.Database.Postgres.URL != "" {
+			// cdk-mintd requires the database URL to be in the config file
+			if mint.Spec.Database.Postgres.AutoProvision {
+				// Construct the URL for auto-provisioned postgres with password in cleartext
+				postgresHost := fmt.Sprintf("%s-postgres", mint.Name)
+				postgresUser := "cdk"
+				postgresDB := "cdk_mintd"
+				dbURL := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s?sslmode=disable",
+					postgresUser, dbPassword, postgresHost, postgresDB)
+				buf.WriteString(fmt.Sprintf("url = %q\n", dbURL))
+			} else if mint.Spec.Database.Postgres.URL != "" {
 				// Direct URL specified (not recommended for production)
 				buf.WriteString(fmt.Sprintf("url = %q\n", mint.Spec.Database.Postgres.URL))
 			} else {
-				// Placeholder URL — the actual value is loaded at runtime from the
-				// CDK_MINTD_DATABASE_URL environment variable. The field must be
-				// present so the TOML section deserializes correctly.
-				buf.WriteString("url = \"\"\n")
+				// URL from secret - commented out as we need the actual URL in the config
+				buf.WriteString("# Database URL must be provided via spec.database.postgres.url or urlSecretRef\n")
 			}
 
 			tlsMode := mint.Spec.Database.Postgres.TLSMode
@@ -290,17 +299,28 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 
 	case "grpcprocessor":
 		if mint.Spec.Lightning.GRPCProcessor != nil {
-			address, port, err := resolveGRPCProcessorEndpoint(mint)
-			if err != nil {
-				return "", err
-			}
-
 			buf.WriteString("\n[grpc_processor]\n")
-			// tonic requires the address to include a URL scheme
-			if !strings.HasPrefix(address, "http://") && !strings.HasPrefix(address, "https://") {
-				address = "http://" + address
+
+			// Determine address - use localhost if a sidecar processor is deployed
+			addr := mint.Spec.Lightning.GRPCProcessor.Address
+			if mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+				mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled {
+				addr = "http://localhost"
 			}
-			buf.WriteString(fmt.Sprintf("addr = %q\n", address))
+			if addr == "" {
+				addr = "http://localhost" // Default to localhost
+			}
+			// tonic requires the address to include a URL scheme
+			if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+				addr = "http://" + addr
+			}
+			buf.WriteString(fmt.Sprintf("addr = %q\n", addr))
+
+			// Determine port
+			port := mint.Spec.Lightning.GRPCProcessor.Port
+			if port == 0 {
+				port = 50051 // Default port
+			}
 			buf.WriteString(fmt.Sprintf("port = %d\n", port))
 
 			// Default supported units
@@ -311,7 +331,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 			units := strings.Join(supportedUnits, `", "`)
 			buf.WriteString(fmt.Sprintf("supported_units = [\"%s\"]\n", units))
 
-			// TLS configuration if provided
+			// TLS configuration if provided (for external processors)
 			if mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
 				buf.WriteString("tls_cert_path = \"/secrets/grpc/client.crt\"\n")
 				buf.WriteString("tls_key_path = \"/secrets/grpc/client.key\"\n")
@@ -465,25 +485,4 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 	}
 
 	return buf.String(), nil
-}
-
-func resolveGRPCProcessorEndpoint(mint *mintv1alpha1.CashuMint) (string, int32, error) {
-	grpcProcessor := mint.Spec.Lightning.GRPCProcessor
-	if grpcProcessor == nil {
-		return "", 0, fmt.Errorf("grpc processor backend requires spec.lightning.grpcProcessor")
-	}
-
-	if grpcProcessor.ProcessorRef != "" {
-		processor, ok := FindPaymentProcessorByName(mint, grpcProcessor.ProcessorRef)
-		if !ok {
-			return "", 0, fmt.Errorf("spec.lightning.grpcProcessor.processorRef %q not found in spec.paymentProcessors", grpcProcessor.ProcessorRef)
-		}
-		return PaymentProcessorServiceAddress(mint, processor), EffectivePaymentProcessorPort(processor), nil
-	}
-
-	if grpcProcessor.Address == "" || grpcProcessor.Port == 0 {
-		return "", 0, fmt.Errorf("spec.lightning.grpcProcessor.address and port are required when processorRef is not set")
-	}
-
-	return grpcProcessor.Address, grpcProcessor.Port, nil
 }

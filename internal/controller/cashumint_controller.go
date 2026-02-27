@@ -19,8 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -31,7 +29,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -39,6 +36,7 @@ import (
 
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 	"github.com/asmogo/cashu-operator/internal/controller/generators"
+	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
 )
 
 const (
@@ -49,34 +47,25 @@ const (
 
 	// Finalizer name
 	cashuMintFinalizer = "mint.cashu.asmogo.github.io/finalizer"
-
-	lightningBackendGRPCProcessor = "grpcprocessor"
 )
 
 // CashuMintReconciler reconciles a CashuMint object
 type CashuMintReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme *runtime.Scheme
 }
 
-type secretDependency struct {
-	name string
-	key  string
-}
-
-// +kubebuilder:rbac:groups=mint.cashu.asmogo.github.io,resources=cashumints,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=mint.cashu.asmogo.github.io,resources=cashumints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=mint.cashu.asmogo.github.io,resources=cashumints/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=mint.cashu.asmogo.github.io,resources=cashumints/finalizers,verbs=update
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;patch;delete
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -110,7 +99,6 @@ func (r *CashuMintReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			logger.Error(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
-		r.emitEventf(cashuMint, corev1.EventTypeNormal, "FinalizerAdded", "Added finalizer for cleanup")
 		return ctrl.Result{Requeue: true}, nil
 	}
 
@@ -121,11 +109,10 @@ func (r *CashuMintReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			logger.Error(err, "Failed to update status to Pending")
 			return ctrl.Result{}, err
 		}
-		r.emitEventf(cashuMint, corev1.EventTypeNormal, "Pending", "Initialized status phase to Pending")
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// Main reconciliation logic - will be implemented in subsequent tasks
+	// Main reconciliation logic
 	result, err := r.reconcileResources(ctx, cashuMint)
 	if err != nil {
 		return r.handleError(ctx, cashuMint, err)
@@ -145,205 +132,20 @@ func (r *CashuMintReconciler) handleDeletion(ctx context.Context, cashuMint *min
 	logger := log.FromContext(ctx)
 
 	if controllerutil.ContainsFinalizer(cashuMint, cashuMintFinalizer) {
+		// Perform cleanup logic here
 		logger.Info("Performing cleanup for CashuMint", "name", cashuMint.Name)
-		r.emitEventf(cashuMint, corev1.EventTypeNormal, "Deleting", "Running finalizer cleanup")
 
-		cleanupCompleted, err := r.cleanupOwnedResources(ctx, cashuMint)
-		if err != nil {
-			logger.Error(err, "Failed to cleanup managed resources")
-			return ctrl.Result{}, err
-		}
-		if !cleanupCompleted {
-			return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, nil
-		}
+		// TODO: Add cleanup logic (e.g., external database cleanup, notifications)
 
+		// Remove finalizer
 		controllerutil.RemoveFinalizer(cashuMint, cashuMintFinalizer)
 		if err := r.Update(ctx, cashuMint); err != nil {
 			logger.Error(err, "Failed to remove finalizer")
 			return ctrl.Result{}, err
 		}
-		r.emitEventf(cashuMint, corev1.EventTypeNormal, "Deleted", "Finalizer cleanup complete")
 	}
 
 	return ctrl.Result{}, nil
-}
-
-func (r *CashuMintReconciler) cleanupOwnedResources(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) (bool, error) {
-	resourcesPendingDeletion := false
-
-	managedResources := []client.Object{
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name, Namespace: cashuMint.Namespace}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name, Namespace: cashuMint.Namespace}},
-		&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name + "-config", Namespace: cashuMint.Namespace}},
-		&networkingv1.Ingress{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name, Namespace: cashuMint.Namespace}},
-		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name + "-data", Namespace: cashuMint.Namespace}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name + "-postgres-secret", Namespace: cashuMint.Namespace}},
-		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name + "-postgres", Namespace: cashuMint.Namespace}},
-		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name + "-postgres", Namespace: cashuMint.Namespace}},
-		&batchv1.CronJob{ObjectMeta: metav1.ObjectMeta{Name: cashuMint.Name + "-backup", Namespace: cashuMint.Namespace}},
-	}
-
-	for _, managedResource := range managedResources {
-		pending, err := r.cleanupOwnedResource(ctx, cashuMint, managedResource)
-		if err != nil {
-			return false, err
-		}
-		if pending {
-			resourcesPendingDeletion = true
-		}
-	}
-
-	backupJobs := &batchv1.JobList{}
-	if err := r.List(
-		ctx,
-		backupJobs,
-		client.InNamespace(cashuMint.Namespace),
-		client.MatchingLabels{
-			"app.kubernetes.io/instance":   cashuMint.Name,
-			"app.kubernetes.io/component":  "backup",
-			"app.kubernetes.io/managed-by": "cashu-operator",
-		},
-	); err != nil {
-		return false, fmt.Errorf("failed to list managed backup jobs: %w", err)
-	}
-
-	for i := range backupJobs.Items {
-		pending, err := r.cleanupOwnedResource(ctx, cashuMint, &backupJobs.Items[i])
-		if err != nil {
-			return false, err
-		}
-		if pending {
-			resourcesPendingDeletion = true
-		}
-	}
-
-	processorDeployments := &appsv1.DeploymentList{}
-	if err := r.List(
-		ctx,
-		processorDeployments,
-		client.InNamespace(cashuMint.Namespace),
-		client.MatchingLabels{
-			"app.kubernetes.io/instance":   cashuMint.Name,
-			"app.kubernetes.io/component":  "payment-processor",
-			"app.kubernetes.io/managed-by": "cashu-operator",
-		},
-	); err != nil {
-		return false, fmt.Errorf("failed to list managed payment processor deployments: %w", err)
-	}
-	for i := range processorDeployments.Items {
-		pending, err := r.cleanupOwnedResource(ctx, cashuMint, &processorDeployments.Items[i])
-		if err != nil {
-			return false, err
-		}
-		if pending {
-			resourcesPendingDeletion = true
-		}
-	}
-
-	processorServices := &corev1.ServiceList{}
-	if err := r.List(
-		ctx,
-		processorServices,
-		client.InNamespace(cashuMint.Namespace),
-		client.MatchingLabels{
-			"app.kubernetes.io/instance":   cashuMint.Name,
-			"app.kubernetes.io/component":  "payment-processor",
-			"app.kubernetes.io/managed-by": "cashu-operator",
-		},
-	); err != nil {
-		return false, fmt.Errorf("failed to list managed payment processor services: %w", err)
-	}
-	for i := range processorServices.Items {
-		pending, err := r.cleanupOwnedResource(ctx, cashuMint, &processorServices.Items[i])
-		if err != nil {
-			return false, err
-		}
-		if pending {
-			resourcesPendingDeletion = true
-		}
-	}
-
-	return !resourcesPendingDeletion, nil
-}
-
-func (r *CashuMintReconciler) cleanupOwnedResource(ctx context.Context, cashuMint *mintv1alpha1.CashuMint, obj client.Object) (bool, error) {
-	if err := r.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("failed to get %T %q: %w", obj, client.ObjectKeyFromObject(obj), err)
-	}
-
-	if !metav1.IsControlledBy(obj, cashuMint) {
-		return false, nil
-	}
-
-	if !obj.GetDeletionTimestamp().IsZero() {
-		return true, nil
-	}
-
-	if err := deleteResourceIfExists(ctx, r.Client, obj); err != nil {
-		return false, fmt.Errorf("failed to delete %T %q: %w", obj, client.ObjectKeyFromObject(obj), err)
-	}
-
-	return true, nil
-}
-
-func (r *CashuMintReconciler) emitEventf(
-	cashuMint *mintv1alpha1.CashuMint,
-	eventType,
-	reason,
-	message string,
-) {
-	if r.Recorder == nil || cashuMint == nil {
-		return
-	}
-
-	r.Recorder.Event(cashuMint, eventType, reason, message)
-}
-
-func (r *CashuMintReconciler) populateDatabaseStatus(cashuMint *mintv1alpha1.CashuMint) {
-	now := metav1.Now()
-	cashuMint.Status.DatabaseStatus.LastChecked = &now
-
-	databaseCondition := meta.FindStatusCondition(cashuMint.Status.Conditions, mintv1alpha1.ConditionTypeDatabaseReady)
-	if databaseCondition != nil {
-		cashuMint.Status.DatabaseStatus.Connected = databaseCondition.Status == metav1.ConditionTrue
-		cashuMint.Status.DatabaseStatus.Message = databaseCondition.Message
-		return
-	}
-
-	switch cashuMint.Spec.Database.Engine {
-	case "sqlite", "redb":
-		cashuMint.Status.DatabaseStatus.Connected = true
-		cashuMint.Status.DatabaseStatus.Message = fmt.Sprintf("Using local %s database storage", cashuMint.Spec.Database.Engine)
-	case "postgres":
-		if cashuMint.Spec.Database.Postgres != nil && !cashuMint.Spec.Database.Postgres.AutoProvision {
-			cashuMint.Status.DatabaseStatus.Connected = true
-			cashuMint.Status.DatabaseStatus.Message = "External PostgreSQL configuration reconciled"
-		} else {
-			cashuMint.Status.DatabaseStatus.Connected = false
-			cashuMint.Status.DatabaseStatus.Message = "Waiting for PostgreSQL readiness"
-		}
-	default:
-		cashuMint.Status.DatabaseStatus.Connected = false
-		cashuMint.Status.DatabaseStatus.Message = "Database readiness pending"
-	}
-}
-
-func (r *CashuMintReconciler) populateLightningStatus(cashuMint *mintv1alpha1.CashuMint) {
-	now := metav1.Now()
-	cashuMint.Status.LightningStatus.LastChecked = &now
-
-	lightningCondition := meta.FindStatusCondition(cashuMint.Status.Conditions, mintv1alpha1.ConditionTypeLightningReady)
-	if lightningCondition != nil {
-		cashuMint.Status.LightningStatus.Connected = lightningCondition.Status == metav1.ConditionTrue
-		cashuMint.Status.LightningStatus.Message = lightningCondition.Message
-		return
-	}
-
-	cashuMint.Status.LightningStatus.Connected = cashuMint.Spec.Lightning.Backend == "fakewallet"
-	cashuMint.Status.LightningStatus.Message = fmt.Sprintf("Lightning backend configured: %s", cashuMint.Spec.Lightning.Backend)
 }
 
 // reconcileResources handles the main reconciliation of all resources
@@ -360,15 +162,11 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 			Reason:             "Provisioning",
 			Message:            "Starting resource provisioning",
 		})
-		r.emitEventf(cashuMint, corev1.EventTypeNormal, "Provisioning", "Starting resource provisioning")
 	}
 
 	// Check if spec has changed (generation mismatch)
 	if cashuMint.Status.ObservedGeneration != 0 && cashuMint.Status.ObservedGeneration != cashuMint.Generation {
 		logger.Info("Spec changed, updating resources")
-		if cashuMint.Status.Phase != mintv1alpha1.MintPhaseUpdating {
-			r.emitEventf(cashuMint, corev1.EventTypeNormal, "Updating", "Updating resources due to spec change")
-		}
 		cashuMint.Status.Phase = mintv1alpha1.MintPhaseUpdating
 		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
 			Type:               mintv1alpha1.ConditionTypeReady,
@@ -395,19 +193,13 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		}
 	}
 
-	// Phase 3: Reconcile managed payment processors
-	logger.Info("Reconciling managed payment processors")
-	if err := r.reconcilePaymentProcessors(ctx, cashuMint); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to reconcile payment processors: %w", err)
-	}
-
-	// Phase 4: Reconcile ConfigMap
+	// Phase 3: Reconcile ConfigMap
 	logger.Info("Reconciling ConfigMap")
 	if err := r.reconcileConfigMap(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile ConfigMap: %w", err)
 	}
 
-	// Phase 5: Reconcile PVC (for SQLite/redb)
+	// Phase 4: Reconcile PVC (for SQLite/redb)
 	if cashuMint.Spec.Database.Engine == "sqlite" || cashuMint.Spec.Database.Engine == "redb" {
 		logger.Info("Reconciling PVC for local database")
 		if err := r.reconcilePVC(ctx, cashuMint); err != nil {
@@ -415,38 +207,32 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		}
 	}
 
-	// Ensure rollout prerequisites are ready before deployment/service/ingress reconciliation.
-	if result, blocked, err := r.ensureRolloutPrerequisites(ctx, cashuMint); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to check rollout prerequisites: %w", err)
-	} else if blocked {
-		return result, nil
-	}
-
-	meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-		Type:               mintv1alpha1.ConditionTypeLightningReady,
-		Status:             metav1.ConditionTrue,
-		ObservedGeneration: cashuMint.Generation,
-		Reason:             "LightningBackendReady",
-		Message:            fmt.Sprintf("Lightning backend %q configuration is ready", cashuMint.Spec.Lightning.Backend),
-	})
-
-	// Phase 6: Reconcile Deployment
+	// Phase 4: Reconcile Deployment
 	logger.Info("Reconciling Deployment")
 	if err := r.reconcileDeployment(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile Deployment: %w", err)
 	}
 
-	// Phase 7: Reconcile Service
+	// Phase 5: Reconcile Service
 	logger.Info("Reconciling Service")
 	if err := r.reconcileService(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile Service: %w", err)
 	}
 
-	// Phase 8: Reconcile Ingress (if enabled)
+	// Phase 6: Reconcile Ingress (if enabled)
 	if cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled {
 		logger.Info("Reconciling Ingress")
 		if err := r.reconcileIngress(ctx, cashuMint); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to reconcile Ingress: %w", err)
+		}
+
+		// Phase 7: Reconcile Certificate (if cert-manager is enabled)
+		if cashuMint.Spec.Ingress.TLS != nil && cashuMint.Spec.Ingress.TLS.Enabled &&
+			cashuMint.Spec.Ingress.TLS.CertManager != nil && cashuMint.Spec.Ingress.TLS.CertManager.Enabled {
+			logger.Info("Reconciling Certificate")
+			if err := r.reconcileCertificate(ctx, cashuMint); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to reconcile Certificate: %w", err)
+			}
 		}
 	}
 
@@ -454,9 +240,6 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}, deployment); err == nil {
 		if isDeploymentReady(deployment) {
-			if cashuMint.Status.Phase != mintv1alpha1.MintPhaseReady {
-				r.emitEventf(cashuMint, corev1.EventTypeNormal, "Ready", "All resources reconciled successfully")
-			}
 			cashuMint.Status.Phase = mintv1alpha1.MintPhaseReady
 			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
 				Type:               mintv1alpha1.ConditionTypeReady,
@@ -510,7 +293,6 @@ func (r *CashuMintReconciler) handleError(ctx context.Context, cashuMint *mintv1
 		Reason:             "ReconciliationFailed",
 		Message:            err.Error(),
 	})
-	r.emitEventf(cashuMint, corev1.EventTypeWarning, "ReconciliationFailed", err.Error())
 
 	if updateErr := r.Status().Update(ctx, cashuMint); updateErr != nil {
 		logger.Error(updateErr, "Failed to update status after error")
@@ -587,9 +369,6 @@ func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv
 	} else if !apierrors.IsNotFound(err) {
 		logger.Error(err, "Failed to get ConfigMap for status update")
 	}
-
-	r.populateDatabaseStatus(cashuMint)
-	r.populateLightningStatus(cashuMint)
 
 	// Update observed generation
 	cashuMint.Status.ObservedGeneration = cashuMint.Generation
@@ -703,7 +482,6 @@ func (r *CashuMintReconciler) reconcileBackup(ctx context.Context, cashuMint *mi
 	if err := applyResource(ctx, r.Client, cronJob); err != nil {
 		return fmt.Errorf("failed to apply backup CronJob: %w", err)
 	}
-
 	logger.Info("Backup CronJob reconciled", "cronjob", cronJob.Name)
 
 	conditionReason := "BackupScheduleReady"
@@ -733,102 +511,33 @@ func (r *CashuMintReconciler) reconcileBackup(ctx context.Context, cashuMint *mi
 	return nil
 }
 
-// reconcilePaymentProcessors reconciles managed payment processor Deployments and Services.
-func (r *CashuMintReconciler) reconcilePaymentProcessors(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
-	logger := log.FromContext(ctx)
-	desiredProcessors := make(map[string]struct{}, len(cashuMint.Spec.PaymentProcessors))
-
-	for i := range cashuMint.Spec.PaymentProcessors {
-		processor := &cashuMint.Spec.PaymentProcessors[i]
-		desiredProcessors[processor.Name] = struct{}{}
-
-		deployment, err := generators.GeneratePaymentProcessorDeployment(cashuMint, processor, r.Scheme)
-		if err != nil {
-			return fmt.Errorf("failed to generate payment processor deployment %q: %w", processor.Name, err)
-		}
-		if err := applyResource(ctx, r.Client, deployment); err != nil {
-			return fmt.Errorf("failed to apply payment processor deployment %q: %w", processor.Name, err)
-		}
-		logger.Info("Payment processor deployment reconciled", "processor", processor.Name, "deployment", deployment.Name)
-
-		service, err := generators.GeneratePaymentProcessorService(cashuMint, processor, r.Scheme)
-		if err != nil {
-			return fmt.Errorf("failed to generate payment processor service %q: %w", processor.Name, err)
-		}
-		if err := applyResource(ctx, r.Client, service); err != nil {
-			return fmt.Errorf("failed to apply payment processor service %q: %w", processor.Name, err)
-		}
-		logger.Info("Payment processor service reconciled", "processor", processor.Name, "service", service.Name)
-	}
-
-	if err := r.cleanupStalePaymentProcessorResources(ctx, cashuMint, desiredProcessors); err != nil {
-		return fmt.Errorf("failed to cleanup stale payment processor resources: %w", err)
-	}
-
-	return nil
-}
-
-func (r *CashuMintReconciler) cleanupStalePaymentProcessorResources(
-	ctx context.Context,
-	cashuMint *mintv1alpha1.CashuMint,
-	desired map[string]struct{},
-) error {
-	processorLabels := client.MatchingLabels{
-		"app.kubernetes.io/instance":   cashuMint.Name,
-		"app.kubernetes.io/component":  "payment-processor",
-		"app.kubernetes.io/managed-by": "cashu-operator",
-	}
-
-	deployments := &appsv1.DeploymentList{}
-	if err := r.List(ctx, deployments, client.InNamespace(cashuMint.Namespace), processorLabels); err != nil {
-		return fmt.Errorf("failed to list payment processor deployments: %w", err)
-	}
-
-	for i := range deployments.Items {
-		deployment := &deployments.Items[i]
-		if !metav1.IsControlledBy(deployment, cashuMint) {
-			continue
-		}
-
-		processorName := deployment.Labels["app.kubernetes.io/processor"]
-		if _, exists := desired[processorName]; exists {
-			continue
-		}
-
-		if err := deleteResourceIfExists(ctx, r.Client, deployment); err != nil {
-			return fmt.Errorf("failed to delete stale payment processor deployment %q: %w", deployment.Name, err)
-		}
-	}
-
-	services := &corev1.ServiceList{}
-	if err := r.List(ctx, services, client.InNamespace(cashuMint.Namespace), processorLabels); err != nil {
-		return fmt.Errorf("failed to list payment processor services: %w", err)
-	}
-
-	for i := range services.Items {
-		service := &services.Items[i]
-		if !metav1.IsControlledBy(service, cashuMint) {
-			continue
-		}
-
-		processorName := service.Labels["app.kubernetes.io/processor"]
-		if _, exists := desired[processorName]; exists {
-			continue
-		}
-
-		if err := deleteResourceIfExists(ctx, r.Client, service); err != nil {
-			return fmt.Errorf("failed to delete stale payment processor service %q: %w", service.Name, err)
-		}
-	}
-
-	return nil
-}
-
 // reconcileConfigMap reconciles the ConfigMap containing config.toml
 func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
-	configMap, err := generators.GenerateConfigMap(cashuMint, r.Scheme)
+	// Fetch the postgres password if auto-provisioned
+	var dbPassword string
+	if cashuMint.Spec.Database.Engine == "postgres" &&
+		cashuMint.Spec.Database.Postgres != nil &&
+		cashuMint.Spec.Database.Postgres.AutoProvision {
+		secretName := cashuMint.Name + "-postgres-secret"
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, client.ObjectKey{
+			Namespace: cashuMint.Namespace,
+			Name:      secretName,
+		}, secret); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return fmt.Errorf("failed to get postgres secret: %w", err)
+			}
+			// Secret doesn't exist yet, will be created in reconcilePostgres
+			logger.Info("Postgres secret not found yet, will reconcile later")
+			dbPassword = ""
+		} else {
+			dbPassword = string(secret.Data["password"])
+		}
+	}
+
+	configMap, err := generators.GenerateConfigMap(cashuMint, r.Scheme, dbPassword)
 	if err != nil {
 		return fmt.Errorf("failed to generate ConfigMap: %w", err)
 	}
@@ -867,309 +576,6 @@ func (r *CashuMintReconciler) reconcilePVC(ctx context.Context, cashuMint *mintv
 	}
 
 	return nil
-}
-
-// ensureRolloutPrerequisites checks whether rollout dependencies are ready.
-func (r *CashuMintReconciler) ensureRolloutPrerequisites(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) (ctrl.Result, bool, error) {
-	missingSecrets, err := r.findMissingSecretDependencies(ctx, cashuMint)
-	if err != nil {
-		return ctrl.Result{}, false, err
-	}
-
-	if len(missingSecrets) > 0 {
-		readyMessage := fmt.Sprintf("Waiting for required secrets: %s", strings.Join(missingSecrets, ", "))
-		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-			Type:               mintv1alpha1.ConditionTypeReady,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: cashuMint.Generation,
-			Reason:             "DependenciesNotReady",
-			Message:            readyMessage,
-		})
-		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-			Type:               mintv1alpha1.ConditionTypeLightningReady,
-			Status:             metav1.ConditionFalse,
-			ObservedGeneration: cashuMint.Generation,
-			Reason:             "DependenciesNotReady",
-			Message:            "Waiting for required dependencies before Lightning backend can be validated",
-		})
-		r.emitEventf(cashuMint, corev1.EventTypeWarning, "DependenciesNotReady", readyMessage)
-		return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, true, nil
-	}
-
-	if cashuMint.Spec.Database.Engine == "postgres" &&
-		cashuMint.Spec.Database.Postgres != nil &&
-		cashuMint.Spec.Database.Postgres.AutoProvision {
-
-		statefulSet := &appsv1.StatefulSet{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Name:      cashuMint.Name + "-postgres",
-			Namespace: cashuMint.Namespace,
-		}, statefulSet); err != nil {
-			if apierrors.IsNotFound(err) {
-				readyMessage := "Waiting for auto-provisioned PostgreSQL to be ready before deployment"
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-					Type:               mintv1alpha1.ConditionTypeDatabaseReady,
-					Status:             metav1.ConditionFalse,
-					ObservedGeneration: cashuMint.Generation,
-					Reason:             "PostgreSQLNotReady",
-					Message:            "Waiting for PostgreSQL StatefulSet to be created",
-				})
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-					Type:               mintv1alpha1.ConditionTypeReady,
-					Status:             metav1.ConditionFalse,
-					ObservedGeneration: cashuMint.Generation,
-					Reason:             "DependenciesNotReady",
-					Message:            readyMessage,
-				})
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-					Type:               mintv1alpha1.ConditionTypeLightningReady,
-					Status:             metav1.ConditionFalse,
-					ObservedGeneration: cashuMint.Generation,
-					Reason:             "DependenciesNotReady",
-					Message:            "Waiting for required dependencies before Lightning backend can be validated",
-				})
-				r.emitEventf(cashuMint, corev1.EventTypeWarning, "PostgreSQLNotReady", readyMessage)
-				return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, true, nil
-			}
-			return ctrl.Result{}, false, fmt.Errorf("failed to get PostgreSQL StatefulSet: %w", err)
-		}
-
-		if !isStatefulSetReady(statefulSet) {
-			readyMessage := "Waiting for auto-provisioned PostgreSQL to be ready before deployment"
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeDatabaseReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "PostgreSQLNotReady",
-				Message:            "Waiting for PostgreSQL to be ready",
-			})
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "DependenciesNotReady",
-				Message:            readyMessage,
-			})
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeLightningReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "DependenciesNotReady",
-				Message:            "Waiting for required dependencies before Lightning backend can be validated",
-			})
-			r.emitEventf(cashuMint, corev1.EventTypeWarning, "PostgreSQLNotReady", readyMessage)
-			return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, true, nil
-		}
-
-		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-			Type:               mintv1alpha1.ConditionTypeDatabaseReady,
-			Status:             metav1.ConditionTrue,
-			ObservedGeneration: cashuMint.Generation,
-			Reason:             "PostgreSQLReady",
-			Message:            "PostgreSQL database is ready",
-		})
-	}
-
-	if cashuMint.Spec.Lightning.Backend == lightningBackendGRPCProcessor &&
-		cashuMint.Spec.Lightning.GRPCProcessor != nil &&
-		cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef != "" {
-		processor, exists := generators.FindPaymentProcessorByName(
-			cashuMint,
-			cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef,
-		)
-		if !exists {
-			return ctrl.Result{}, false, fmt.Errorf(
-				"referenced payment processor %q not found",
-				cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef,
-			)
-		}
-
-		processorName := generators.PaymentProcessorResourceName(cashuMint.Name, processor.Name)
-		processorDeployment := &appsv1.Deployment{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Name:      processorName,
-			Namespace: cashuMint.Namespace,
-		}, processorDeployment); err != nil {
-			if apierrors.IsNotFound(err) {
-				readyMessage := fmt.Sprintf("Waiting for managed payment processor %q to be created", processor.Name)
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-					Type:               mintv1alpha1.ConditionTypeReady,
-					Status:             metav1.ConditionFalse,
-					ObservedGeneration: cashuMint.Generation,
-					Reason:             "DependenciesNotReady",
-					Message:            readyMessage,
-				})
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-					Type:               mintv1alpha1.ConditionTypeLightningReady,
-					Status:             metav1.ConditionFalse,
-					ObservedGeneration: cashuMint.Generation,
-					Reason:             "DependenciesNotReady",
-					Message:            readyMessage,
-				})
-				r.emitEventf(cashuMint, corev1.EventTypeWarning, "PaymentProcessorNotReady", readyMessage)
-				return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, true, nil
-			}
-			return ctrl.Result{}, false, fmt.Errorf("failed to get payment processor deployment: %w", err)
-		}
-
-		if !isDeploymentReady(processorDeployment) {
-			readyMessage := fmt.Sprintf("Waiting for managed payment processor %q to be ready", processor.Name)
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "DependenciesNotReady",
-				Message:            readyMessage,
-			})
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeLightningReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "DependenciesNotReady",
-				Message:            readyMessage,
-			})
-			r.emitEventf(cashuMint, corev1.EventTypeWarning, "PaymentProcessorNotReady", readyMessage)
-			return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, true, nil
-		}
-	}
-
-	return ctrl.Result{}, false, nil
-}
-
-func (r *CashuMintReconciler) findMissingSecretDependencies(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) ([]string, error) {
-	dependencies := collectSecretDependencies(cashuMint)
-	if len(dependencies) == 0 {
-		return nil, nil
-	}
-
-	missing := make([]string, 0)
-	missingSet := make(map[string]struct{})
-
-	for _, dependency := range dependencies {
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Namespace: cashuMint.Namespace,
-			Name:      dependency.name,
-		}, secret); err != nil {
-			if apierrors.IsNotFound(err) {
-				ref := formatSecretDependency(dependency.name, dependency.key)
-				if _, exists := missingSet[ref]; !exists {
-					missingSet[ref] = struct{}{}
-					missing = append(missing, ref)
-				}
-				continue
-			}
-			return nil, fmt.Errorf("failed to get secret %q: %w", dependency.name, err)
-		}
-
-		if dependency.key != "" {
-			if _, exists := secret.Data[dependency.key]; !exists {
-				ref := formatSecretDependency(dependency.name, dependency.key)
-				if _, alreadyMissing := missingSet[ref]; !alreadyMissing {
-					missingSet[ref] = struct{}{}
-					missing = append(missing, ref)
-				}
-			}
-		}
-	}
-
-	sort.Strings(missing)
-	return missing, nil
-}
-
-func collectSecretDependencies(cashuMint *mintv1alpha1.CashuMint) []secretDependency {
-	dependencies := make([]secretDependency, 0)
-
-	addOptionalRef := func(ref *corev1.SecretKeySelector) {
-		if ref == nil || ref.Name == "" {
-			return
-		}
-		dependencies = append(dependencies, secretDependency{name: ref.Name, key: ref.Key})
-	}
-	addRequiredRef := func(ref corev1.SecretKeySelector) {
-		if ref.Name == "" {
-			return
-		}
-		dependencies = append(dependencies, secretDependency{name: ref.Name, key: ref.Key})
-	}
-
-	addOptionalRef(cashuMint.Spec.MintInfo.MnemonicSecretRef)
-	if cashuMint.Spec.Database.Postgres != nil {
-		addOptionalRef(cashuMint.Spec.Database.Postgres.URLSecretRef)
-	}
-	if cashuMint.Spec.Auth != nil && cashuMint.Spec.Auth.Enabled &&
-		cashuMint.Spec.Auth.Database != nil && cashuMint.Spec.Auth.Database.Postgres != nil {
-		addOptionalRef(cashuMint.Spec.Auth.Database.Postgres.URLSecretRef)
-	}
-
-	switch cashuMint.Spec.Lightning.Backend {
-	case "lnd":
-		if cashuMint.Spec.Lightning.LND != nil {
-			addOptionalRef(cashuMint.Spec.Lightning.LND.MacaroonSecretRef)
-			addOptionalRef(cashuMint.Spec.Lightning.LND.CertSecretRef)
-		}
-	case "lnbits":
-		if cashuMint.Spec.Lightning.LNBits != nil {
-			addRequiredRef(cashuMint.Spec.Lightning.LNBits.AdminAPIKeySecretRef)
-			addRequiredRef(cashuMint.Spec.Lightning.LNBits.InvoiceAPIKeySecretRef)
-		}
-	case lightningBackendGRPCProcessor:
-		if cashuMint.Spec.Lightning.GRPCProcessor != nil {
-			addOptionalRef(cashuMint.Spec.Lightning.GRPCProcessor.TLSSecretRef)
-		}
-	}
-
-	if cashuMint.Spec.LDKNode != nil && cashuMint.Spec.LDKNode.Enabled && cashuMint.Spec.LDKNode.BitcoinRPC != nil {
-		addRequiredRef(cashuMint.Spec.LDKNode.BitcoinRPC.UserSecretRef)
-		addRequiredRef(cashuMint.Spec.LDKNode.BitcoinRPC.PasswordSecretRef)
-	}
-
-	if cashuMint.Spec.HTTPCache != nil && cashuMint.Spec.HTTPCache.Backend == "redis" && cashuMint.Spec.HTTPCache.Redis != nil {
-		addOptionalRef(cashuMint.Spec.HTTPCache.Redis.ConnectionStringSecretRef)
-	}
-
-	if cashuMint.Spec.Backup != nil && cashuMint.Spec.Backup.Enabled && cashuMint.Spec.Backup.S3 != nil {
-		addRequiredRef(cashuMint.Spec.Backup.S3.AccessKeyIDSecretRef)
-		addRequiredRef(cashuMint.Spec.Backup.S3.SecretAccessKeySecretRef)
-	}
-
-	if cashuMint.Spec.Lightning.Backend == lightningBackendGRPCProcessor &&
-		cashuMint.Spec.Lightning.GRPCProcessor != nil &&
-		cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef != "" {
-		for i := range cashuMint.Spec.PaymentProcessors {
-			processor := cashuMint.Spec.PaymentProcessors[i]
-			if processor.Name != cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef {
-				continue
-			}
-			for _, envVar := range processor.Env {
-				if envVar.ValueFrom == nil || envVar.ValueFrom.SecretKeyRef == nil {
-					continue
-				}
-				if envVar.ValueFrom.SecretKeyRef.Optional != nil && *envVar.ValueFrom.SecretKeyRef.Optional {
-					addOptionalRef(envVar.ValueFrom.SecretKeyRef)
-					continue
-				}
-				addRequiredRef(*envVar.ValueFrom.SecretKeyRef)
-			}
-			break
-		}
-	}
-
-	for _, imagePullSecret := range cashuMint.Spec.ImagePullSecrets {
-		if imagePullSecret.Name == "" {
-			continue
-		}
-		dependencies = append(dependencies, secretDependency{name: imagePullSecret.Name})
-	}
-
-	return dependencies
-}
-
-func formatSecretDependency(name, key string) string {
-	if key == "" {
-		return name
-	}
-	return fmt.Sprintf("%s/%s", name, key)
 }
 
 // reconcileDeployment reconciles the Deployment for the mint
@@ -1238,12 +644,27 @@ func (r *CashuMintReconciler) reconcileIngress(ctx context.Context, cashuMint *m
 	return nil
 }
 
-// SetupWithManager sets up the controller with the Manager.
-func (r *CashuMintReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	if r.Recorder == nil {
-		r.Recorder = mgr.GetEventRecorderFor("cashumint-controller")
+// reconcileCertificate reconciles the Certificate for the mint
+func (r *CashuMintReconciler) reconcileCertificate(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	logger := log.FromContext(ctx)
+
+	cert, err := generators.GenerateCertificate(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate Certificate: %w", err)
 	}
 
+	if cert != nil {
+		if err := applyResource(ctx, r.Client, cert); err != nil {
+			return fmt.Errorf("failed to apply Certificate: %w", err)
+		}
+		logger.Info("Certificate reconciled", "certificate", cert.Name)
+	}
+
+	return nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *CashuMintReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&mintv1alpha1.CashuMint{}).
 		Owns(&appsv1.Deployment{}).
@@ -1255,6 +676,7 @@ func (r *CashuMintReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.Secret{}).
 		Owns(&networkingv1.Ingress{}).
+		Owns(&certmanagerv1.Certificate{}).
 		Named("cashumint").
 		Complete(r)
 }
