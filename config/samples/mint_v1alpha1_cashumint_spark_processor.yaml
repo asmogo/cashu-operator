@@ -43,30 +43,41 @@ spec:
     minMelt: 100
     maxMelt: 1000000
     grpcProcessor:
-
-      # Address and port are auto-configured for sidecar
-      address: "http://localhost"  # Optional: will default to localhost when sparkPaymentProcessor is enabled
       port: 50051
       supportedUnits:
         - sat
-      # Enable and configure the Spark payment processor sidecar
-      sparkPaymentProcessor:
+      # Enable the generic gRPC sidecar processor
+      # address defaults to localhost when sidecarProcessor is enabled
+      sidecarProcessor:
         enabled: true
-        image: "docker.io/asmogo/cdk-stripe-payment-processor:sha-aae46ba"
+        image: "docker.io/asmogo/cdk-spark-payment-processor:latest"
         imagePullPolicy: IfNotPresent
-        # Breez API key from secret (required)
-        breezApiKeySecretRef:
-          name: spark-processor-secrets
-          key: breez-api-key
-        # BIP-39 mnemonic from secret (required)
-        mnemonicSecretRef:
-          name: spark-processor-secrets
-          key: mnemonic
-        # Optional: passphrase for mnemonic
-        # passphraseSecretRef:
-        #   name: spark-processor-secrets
-        #   key: passphrase
         workingDir: "/data/spark-processor"
+        env:
+          - name: SERVER_ADDR
+            value: "0.0.0.0"
+          - name: SERVER_PORT
+            value: "50051"
+          - name: WORKING_DIR
+            value: "/data/spark-processor"
+          # Breez API key from secret (required)
+          - name: BREEZ_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: spark-processor-secrets
+                key: breez-api-key
+          # BIP-39 mnemonic from secret (required)
+          - name: BREEZ_MNEMONIC
+            valueFrom:
+              secretKeyRef:
+                name: spark-processor-secrets
+                key: mnemonic
+          # Optional: passphrase for mnemonic
+          # - name: BREEZ_PASSPHRASE
+          #   valueFrom:
+          #     secretKeyRef:
+          #       name: spark-processor-secrets
+          #       key: passphrase
         # Resource requirements for the processor
         resources:
           requests:
@@ -75,7 +86,7 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
-        # Optional: Enable TLS for gRPC server
+        # Optional: Enable TLS for the gRPC server
         # enableTLS: false
         # tlsSecretRef:
         #   name: spark-tls-secret
@@ -143,10 +154,10 @@ type: Opaque
 stringData:
   # Replace with your actual Breez API key from https://breez.technology/request-api-key/
   breez-api-key: ""
-  # Replace with your BIP-39 mnemonic (12 or 24 words)
+  # Replace with your BIP-39 mnemonic (12 or 24 words) for the Spark processor
   mnemonic: ""
-  # Optional: passphrase for mnemonic
-  # passphrase: "your-optional-passphrase"
+  # Optional: passphrase for the mnemonic
+  # passphrase: ""
 
 ---
 # Secret for the mint mnemonic

@@ -18,29 +18,28 @@ spec:
       autoProvisionSpec:
         storageSize: 20Gi
         version: "16"
-  paymentProcessors:
-    - name: stripe-primary
-      image: asmogo/cdk-stripe-payment-processor:sha-7512cbe
-      port: 50051
-      env:
-        - name: STRIPE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: stripe-credentials
-              key: STRIPE_API_KEY
-        - name: STRIPE_WEBHOOK_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: stripe-credentials
-              key: STRIPE_WEBHOOK_SECRET
-        - name: SERVER_PORT
-          value: "50051"
   lightning:
     backend: grpcprocessor
     grpcProcessor:
-      processorRef: stripe-primary
       supportedUnits:
         - usd
+      sidecarProcessor:
+        enabled: true
+        image: asmogo/cdk-stripe-payment-processor:sha-7512cbe
+        workingDir: /data/stripe-processor
+        env:
+          - name: STRIPE_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: stripe-credentials
+                key: STRIPE_API_KEY
+          - name: STRIPE_WEBHOOK_SECRET
+            valueFrom:
+              secretKeyRef:
+                name: stripe-credentials
+                key: STRIPE_WEBHOOK_SECRET
+          - name: SERVER_PORT
+            value: "50051"
   ingress:
     enabled: true
     host: stripe-mint.example.com
