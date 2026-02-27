@@ -306,17 +306,19 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		if mint.Spec.Lightning.GRPCProcessor != nil {
 			buf.WriteString("\n[grpc_processor]\n")
 
-			// addr is a plain hostname/IP — CDK does NOT expect a URL scheme here.
-			// Default to "127.0.0.1" when sidecar is enabled (processor runs on localhost).
+			// addr is passed to tonic's Channel::from_shared("{addr}:{port}"), which
+			// requires a URI scheme. Use "http://" for plaintext, "https://" for TLS.
+			// Default to "http://127.0.0.1" when a sidecar is running on localhost.
 			addr := mint.Spec.Lightning.GRPCProcessor.Address
 			sidecarEnabled := mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
 				mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled
 			if sidecarEnabled || addr == "" {
-				addr = "127.0.0.1"
+				addr = "http://127.0.0.1"
 			}
-			// Strip any accidental scheme prefix (the field must be a bare host)
-			addr = strings.TrimPrefix(addr, "http://")
-			addr = strings.TrimPrefix(addr, "https://")
+			// Ensure a scheme is present
+			if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
+				addr = "http://" + addr
+			}
 			buf.WriteString(fmt.Sprintf("addr = %q\n", addr))
 
 			port := mint.Spec.Lightning.GRPCProcessor.Port
