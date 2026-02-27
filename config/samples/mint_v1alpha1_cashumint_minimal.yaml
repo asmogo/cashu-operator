@@ -4,7 +4,7 @@ kind: CashuMint
 metadata:
   name: cashumint-minimal
 spec:
-  image: asmogo/mintd:sha-e573e43-amd64
+  image: ghcr.io/cashubtc/cdk-mintd:v0.15.0
   podSecurityContext:
     runAsUser: 0
     fsGroup: 0
@@ -18,10 +18,7 @@ spec:
       drop:
         - ALL
   mintInfo:
-    url: http://cashumint-minimal.local
-    mnemonicSecretRef:
-      name: cashumint-minimal-secrets
-      key: mnemonic
+    url: http://cashu.dev.ucash.space
   database:
     engine: sqlite
     sqlite:

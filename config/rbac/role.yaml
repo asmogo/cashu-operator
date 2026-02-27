@@ -17,7 +17,6 @@ rules:
   - get
   - list
   - patch
-  - update
   - watch
 - apiGroups:
   - ""
@@ -37,15 +36,24 @@ rules:
   - get
   - list
   - patch
-  - update
+  - watch
+- apiGroups:
+  - batch
+  resources:
+  - cronjobs
+  - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
   - watch
 - apiGroups:
   - mint.cashu.asmogo.github.io
   resources:
   - cashumints
   verbs:
-  - create
-  - delete
   - get
   - list
   - patch
@@ -75,5 +83,4 @@ rules:
   - get
   - list
   - patch
-  - update
   - watch

@@ -36,6 +36,29 @@ This guide lists common operational issues, diagnostic procedures, and remediati
 
 ---
 
+### Issue: `Ready=False` with reason `DependenciesNotReady`
+
+**Possible causes**
+
+- One or more referenced Secrets/keys are missing (for example DB URL, Lightning credentials, backup credentials, image pull secrets, or mnemonic).
+- Auto-provisioned PostgreSQL is not yet ready.
+
+**Diagnostics**
+
+```bash
+kubectl get cashumint <name> -n <namespace> -o jsonpath='{range .status.conditions[*]}{.type}{"="}{.status}{" reason="}{.reason}{" message="}{.message}{"\n"}{end}'
+kubectl get secret <secret-name> -n <namespace> -o yaml
+kubectl get statefulset <mint-name>-postgres -n <namespace>
+```
+
+**Resolutions**
+
+- Create missing Secrets and required keys exactly as referenced in the `CashuMint` spec.
+- If PostgreSQL is auto-provisioned, wait for StatefulSet readiness and PVC binding.
+- Reconcile resumes automatically (10s retry interval) once dependencies are ready.
+
+---
+
 ### Issue: PostgreSQL auto-provisioning fails
 
 **Possible causes**
@@ -146,10 +169,11 @@ kubectl get configmap <mint-name>-config -o yaml -n <namespace>
 | Condition         | Meaning                                                     | Typical Remediation                                        |
 |-------------------|-------------------------------------------------------------|-------------------------------------------------------------|
 | `Ready`           | Overall availability. `True` when all components ready.     | Review component-specific conditions if `False`.            |
-| `DatabaseReady`   | Database connection or provisioning succeeded.              | Check connection URL, credentials, PVC readiness.           |
-| `LightningReady`  | Lightning backend reachable and authenticated.              | Validate backend configuration and secrets.                 |
+| `DatabaseReady`   | Database dependency gate status (auto-provisioned DB readiness or DB config reconciliation for external DB). | Check PostgreSQL StatefulSet/PVC readiness or DB secret/url references. |
+| `LightningReady`  | Lightning dependency gate status after required secrets/dependencies are present. | Validate backend config and referenced secret keys.         |
 | `ConfigValid`     | Operator validated spec and generated config successfully.  | Fix spec fields referenced in validation error message.     |
 | `IngressReady`    | Ingress resource available and (if TLS) certificates active.| Check ingress status, DNS, cert-manager logs.               |
+| `BackupReady`     | Backup CronJob (and optional restore Job trigger) reconciled. | Check backup config scope (`postgres` + `autoProvision=true`), CronJob/Job events, and annotations. |
 
 Use `kubectl get cashumint <name> -o jsonpath='{.status.conditions}'` to get raw condition payloads for automation.
 

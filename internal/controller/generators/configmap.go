@@ -30,9 +30,8 @@ import (
 )
 
 // GenerateConfigMap creates a ConfigMap containing the config.toml for the mint
-// dbPassword is the postgres password for auto-provisioned databases (can be empty if not applicable)
-func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme, dbPassword string) (*corev1.ConfigMap, error) {
-	configToml, err := generateConfigToml(mint, dbPassword)
+func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*corev1.ConfigMap, error) {
+	configToml, err := generateConfigToml(mint)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate config.toml: %w", err)
 	}
@@ -67,8 +66,7 @@ func GenerateConfigMap(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme, dbP
 }
 
 // generateConfigToml generates the TOML configuration content
-// dbPassword is the postgres password for auto-provisioned databases (can be empty if not applicable)
-func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string, error) {
+func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 	var buf bytes.Buffer
 
 	// [info] section
@@ -144,21 +142,13 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		if mint.Spec.Database.Postgres != nil {
 			buf.WriteString("\n[database.postgres]\n")
 
-			// cdk-mintd requires the database URL to be in the config file
 			if mint.Spec.Database.Postgres.AutoProvision {
-				// Construct the URL for auto-provisioned postgres with password in cleartext
-				postgresHost := fmt.Sprintf("%s-postgres", mint.Name)
-				postgresUser := "cdk"
-				postgresDB := "cdk_mintd"
-				dbURL := fmt.Sprintf("postgresql://%s:%s@%s:5432/%s?sslmode=disable",
-					postgresUser, dbPassword, postgresHost, postgresDB)
-				buf.WriteString(fmt.Sprintf("url = %q\n", dbURL))
+				buf.WriteString("# Database URL loaded from secret via CDK_MINTD_DATABASE_URL environment variable\n")
 			} else if mint.Spec.Database.Postgres.URL != "" {
 				// Direct URL specified (not recommended for production)
 				buf.WriteString(fmt.Sprintf("url = %q\n", mint.Spec.Database.Postgres.URL))
 			} else {
-				// URL from secret - commented out as we need the actual URL in the config
-				buf.WriteString("# Database URL must be provided via spec.database.postgres.url or urlSecretRef\n")
+				buf.WriteString("# Database URL loaded from secret via CDK_MINTD_DATABASE_URL environment variable\n")
 			}
 
 			tlsMode := mint.Spec.Database.Postgres.TLSMode

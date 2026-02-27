@@ -13,6 +13,7 @@ Before starting, ensure the following tasks are complete:
 - [ ] **Backup data**  
   - Export database dumps (PostgreSQL, SQLite files, redb storage).
   - Archive Lightning-related secrets (macaroons, TLS certs, API keys).
+  - The operator defaults to `ghcr.io/cashubtc/cdk-mintd:v0.15.0`; for PostgreSQL mints, take a fresh verified backup immediately before rollout because CDK v0.15 performs DB migrations (webhook warning is emitted).
 - [ ] **Document current configuration**  
   - Record environment variables, command-line flags, configuration files, Secrets, Service definitions, Ingresses, and PersistentVolumeClaims.
   - Note image versions and customizations.
@@ -42,7 +43,7 @@ Follow this order to ensure zero data loss and minimal downtime.
 
 4. **Deploy operator**
    - Install CRDs: `make install`.
-  - Deploy controller: `make deploy IMG=ghcr.io/<org>/cashu-operator:<tag>`.
+   - Deploy controller: `make deploy IMG=ghcr.io/<org>/cashu-operator:<tag>`.
 
 5. **Apply the `CashuMint` resource**
    - `kubectl apply -f cashumint-migrated.yaml`.
@@ -50,7 +51,7 @@ Follow this order to ensure zero data loss and minimal downtime.
 
 6. **Verify migration**
    - Validate minted tokens, API responses (e.g., `/v1/info`).
-   - Ensure Lightning backend connectivity (check `LightningReady` condition).
+   - Confirm dependency gating has cleared (`LightningReady=True`), then validate real Lightning connectivity with API/log checks.
    - Confirm Ingress routing, TLS certificates, Service endpoints, metrics.
 
 7. **Clean up old resources**
@@ -70,7 +71,7 @@ Use the table below to convert manual configuration into `CashuMint` spec fields
 | Container args/env vars                           | Deployment                    | `spec.mintInfo`, `spec.logging`, `spec.resources`, etc. |
 | Mnemonic secret (`CDK_MINTD_MNEMONIC`)                | Secret                        | `spec.mintInfo.mnemonicSecretRef`                       |
 | Config TOML file                                  | ConfigMap / volume            | Operator auto-generates from spec; remove manual ConfigMap |
-| Database URL env (`CDK_MINTD_DATABASE_URL`)       | Secret/env var                | `spec.database.postgres.urlSecretRef` or `spec.database.postgres.url` |
+| Database URL env (`CDK_MINTD_DATABASE_URL`)       | Secret/env var                | `spec.database.postgres.urlSecretRef` or `spec.database.postgres.url` (auto-provision uses generated `<mint>-postgres-secret`) |
 | Auto-provisioned Postgres                         | StatefulSet + PVC             | `spec.database.postgres.autoProvision=true` + `autoProvisionSpec` |
 | SQLite/redb data path                             | Volume mount                  | `spec.database.engine=sqlite` + `spec.storage`          |
 | Lightning backend configs                         | Env vars / config entries     | `spec.lightning` (choose backend-specific struct)       |
@@ -154,6 +155,13 @@ If issues occur, follow these steps:
 3. **Restore data**
    - Import backups (PostgreSQL dump, SQLite file, etc.).
    - Re-link Secrets to old pods.
+   - For operator-managed PostgreSQL backups, trigger restore by annotating the `CashuMint`:
+   ```bash
+   kubectl annotate cashumint <name> -n <namespace> \
+     mint.cashu.asmogo.github.io/restore-object-key=<s3-object-key> \
+     mint.cashu.asmogo.github.io/restore-request-id=<unique-request-id> \
+     --overwrite
+   ```
 
 4. **Update DNS / ingress**
    - Point traffic back to original Service endpoints.
@@ -182,7 +190,7 @@ If issues occur, follow these steps:
 
 - CRD schema: [`cashumint_types.go`](../api/v1alpha1/cashumint_types.go)
 - Webhook validation: [`cashumint_webhook.go`](../api/v1alpha1/cashumint_webhook.go)
-- Operator architecture: [`OPERATOR_ARCHITECTURE.md`](../OPERATOR_ARCHITECTURE.md)
+- Operator reconciliation implementation: [`cashumint_controller.go`](../internal/controller/cashumint_controller.go)
 - Deployment guide: [`deployment-guide.md`](deployment-guide.md)
 - Troubleshooting: [`troubleshooting.md`](troubleshooting.md)
 - Sample manifests: [`config/samples`](../config/samples/kustomization.yaml)

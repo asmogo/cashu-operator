@@ -42,7 +42,9 @@ Evaluate the Lightning payment processor your mint needs:
 
 - **PostgreSQL auto-provisioned**: defaults to `10Gi`. Use production storage class with SSD-backed volumes. Adjust `spec.database.postgres.autoProvisionSpec.storageSize`.
 - **SQLite/redb**: set `spec.storage.size` to desired capacity (include growth over time). Ensure ReadWriteOnce volume suits single replica deployment.
-- **Backups**: For auto-provisioned PostgreSQL, setup external backup solution (e.g., Velero, snapshots). Operator does not handle backups.
+- **Backups**: For auto-provisioned PostgreSQL, you can configure scheduled S3-compatible `pg_dump` backups via `spec.backup`.
+- **Backup scope**: Current operator-managed backups target auto-provisioned PostgreSQL and upload dumps to object storage.
+- **CDK v0.15 default + migration safety**: The default mint image is `ghcr.io/cashubtc/cdk-mintd:v0.15.0`. For PostgreSQL mints, admission warnings are emitted for `cdk-mintd:v0.15*`; always take a verified database backup immediately before rollout/upgrades.
 
 ---
 
@@ -93,6 +95,48 @@ spec:
 
 - Estimate 1–2 GiB per million mints (depends on spending patterns).
 - Use storage class with high IOPS for minimal latency.
+
+### 2.2.1 Scheduled S3 Backups (Auto-Provisioned PostgreSQL)
+
+```yaml
+spec:
+  backup:
+    enabled: true
+    schedule: "0 */6 * * *"
+    retentionCount: 14
+    s3:
+      bucket: cashu-mint-backups
+      prefix: cashumint-prod
+      region: us-east-1
+      endpoint: https://s3.amazonaws.com
+      accessKeyIdSecretRef:
+        name: cashumint-backup-credentials
+        key: AWS_ACCESS_KEY_ID
+      secretAccessKeySecretRef:
+        name: cashumint-backup-credentials
+        key: AWS_SECRET_ACCESS_KEY
+```
+
+- Backup CronJobs are currently supported for auto-provisioned PostgreSQL.
+- Ensure the backup credentials secret exists in the mint namespace.
+- A one-shot restore Job can be requested by setting annotations on the `CashuMint`:
+  - `mint.cashu.asmogo.github.io/restore-object-key=<s3-object-key>` (required)
+  - `mint.cashu.asmogo.github.io/restore-request-id=<request-id>` (optional, use a new value to create a new restore Job name)
+- Check `status.conditions[type=BackupReady]` to confirm backup/restore resource reconciliation.
+
+**Backup/Restore Runbook**
+
+1. Confirm backups are configured and the backup CronJob exists (`<mint-name>-backup`).
+2. Select the exact backup object key to restore from your S3-compatible bucket.
+3. Trigger restore by annotating the `CashuMint`:
+   ```bash
+   kubectl annotate cashumint <mint-name> -n <namespace> \
+     mint.cashu.asmogo.github.io/restore-object-key=<s3-object-key> \
+     mint.cashu.asmogo.github.io/restore-request-id=<unique-request-id> \
+     --overwrite
+   ```
+4. Watch backup Jobs (`app.kubernetes.io/component=backup`) and `BackupReady` condition updates.
+5. To request the same object restore again, change `restore-request-id` to a new value.
 
 ### 2.3 External PostgreSQL
 
@@ -314,31 +358,24 @@ Follow these guidelines:
 
 ### 6.2 Network Policies
 
-Implement NetworkPolicies to restrict traffic:
+Use the provided hardening assets:
 
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: cashumint-allow-operator
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: cashu-mint
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/component: ingress-controller
-  egress:
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: lightning-ns
+- `config/network-policy/allow-metrics-traffic.yaml` (via `config/network-policy/kustomization.yaml`) restricts operator metrics ingress (port 8443) to namespaces labeled `metrics=enabled`.
+- `config/network-policy/mint/allow-ingress-from-labeled-namespaces.yaml` restricts mint workload ingress to same-namespace pods and explicitly labeled ingress/API gateway namespaces.
+
+Apply the mint workload policy per namespace:
+
+```bash
+kubectl apply -n <mint-namespace> -k config/network-policy/mint
+kubectl label namespace <ingress-namespace> cashu.asmogo.github.io/allow-mint-ingress=true
 ```
 
-- Limit egress to database host, Lightning service, Bitcoin RPC nodes (LDK), and telemetry endpoints.
-- Limit ingress to ingress controllers or API gateways.
+- If you also apply `config/network-policy/allow-metrics-traffic.yaml`, label scraping namespaces:
+  ```bash
+  kubectl label namespace <monitoring-namespace> metrics=enabled
+  ```
+- This template is additive and does not restrict egress by default, avoiding accidental breakage for existing Lightning/database endpoints.
+- For stricter production isolation, add egress rules for database host, Lightning service, Bitcoin RPC nodes (LDK), and telemetry endpoints.
 
 ### 6.3 RBAC
 
@@ -357,6 +394,8 @@ spec:
 - Monitor `kubectl describe cashumint <name>` for status conditions.
 - Use `kubectl get all -l app.kubernetes.io/instance=<mint>` to inspect managed resources.
 - When updating configuration, edit the `CashuMint` CR. Operator triggers rolling deployment if config hash changes.
+- Rollout dependency gating blocks Deployment/Service/Ingress reconciliation until required Secret references exist and auto-provisioned PostgreSQL (if enabled) is ready.
+- While blocked, `Ready=False` and `LightningReady=False` with reason `DependenciesNotReady`, and reconciliation retries every 10 seconds.
 - For zero-downtime upgrades, plan redeployments during maintenance windows in case the new configuration requires initialization.
 
 ---

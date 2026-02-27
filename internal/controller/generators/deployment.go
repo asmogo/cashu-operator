@@ -115,7 +115,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	image := mint.Spec.Image
 	if image == "" {
-		image = "cashubtc/mintd:latest"
+		image = mintv1alpha1.DefaultMintImage
 	}
 
 	imagePullPolicy := mint.Spec.ImagePullPolicy
@@ -260,10 +260,20 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	}
 
 	// Database configuration
-	// Note: For auto-provisioned postgres, the URL with password is now in the config file
-	// For external postgres with URLSecretRef, we still use environment variables
 	if mint.Spec.Database.Engine == "postgres" && mint.Spec.Database.Postgres != nil {
-		if mint.Spec.Database.Postgres.URLSecretRef != nil {
+		if mint.Spec.Database.Postgres.AutoProvision {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "CDK_MINTD_DATABASE_URL",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: mint.Name + "-postgres-secret",
+						},
+						Key: "database-url",
+					},
+				},
+			})
+		} else if mint.Spec.Database.Postgres.URLSecretRef != nil {
 			envVars = append(envVars, corev1.EnvVar{
 				Name: "CDK_MINTD_DATABASE_URL",
 				ValueFrom: &corev1.EnvVarSource{
@@ -277,7 +287,6 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 				Value: mint.Spec.Database.Postgres.URL,
 			})
 		}
-		// For auto-provisioned postgres, the URL is now directly in the config file
 	}
 
 	// Auth database configuration

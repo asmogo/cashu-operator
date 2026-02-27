@@ -1156,6 +1156,97 @@ spec:
                 required:
                 - enabled
                 type: object
+              backup:
+                description: Backup specifies automated backup configuration
+                properties:
+                  enabled:
+                    default: false
+                    description: Enabled controls whether automated backups are active
+                    type: boolean
+                  retentionCount:
+                    default: 14
+                    description: RetentionCount is the number of backups to retain
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  s3:
+                    description: S3 specifies S3-compatible object storage destination
+                      settings
+                    properties:
+                      accessKeyIdSecretRef:
+                        description: AccessKeyIDSecretRef references a secret key
+                          containing object storage access key ID
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      bucket:
+                        description: Bucket is the destination bucket name
+                        type: string
+                      endpoint:
+                        description: Endpoint is an optional custom endpoint for S3-compatible
+                          providers
+                        type: string
+                      prefix:
+                        description: Prefix is an optional object key prefix
+                        type: string
+                      region:
+                        description: Region is an optional object storage region
+                        type: string
+                      secretAccessKeySecretRef:
+                        description: SecretAccessKeySecretRef references a secret
+                          key containing object storage secret access key
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                    required:
+                    - accessKeyIdSecretRef
+                    - bucket
+                    - secretAccessKeySecretRef
+                    type: object
+                  schedule:
+                    description: Schedule is a cron expression used for backup execution
+                    type: string
+                required:
+                - enabled
+                type: object
               containerSecurityContext:
                 description: |-
                   ContainerSecurityContext specifies the security context for the mint container
@@ -1578,7 +1669,7 @@ spec:
                 - backend
                 type: object
               image:
-                default: ghcr.io/cashubtc/cdk-mintd:latest
+                default: ghcr.io/cashubtc/cdk-mintd:v0.15.0
                 description: Image specifies the container image to use
                 type: string
               imagePullPolicy:

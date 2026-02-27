@@ -21,6 +21,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const DefaultMintImage = "ghcr.io/cashubtc/cdk-mintd:v0.15.0"
+
 // CashuMint is the Schema for the cashumints API
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -39,7 +41,7 @@ type CashuMint struct {
 // CashuMintSpec defines the desired state of CashuMint
 type CashuMintSpec struct {
 	// Image specifies the container image to use
-	// +kubebuilder:default="ghcr.io/cashubtc/cdk-mintd:latest"
+	// +kubebuilder:default="ghcr.io/cashubtc/cdk-mintd:v0.15.0"
 	// +optional
 	Image string `json:"image,omitempty"`
 
@@ -117,6 +119,10 @@ type CashuMintSpec struct {
 	// Storage specifies persistent storage configuration
 	// +optional
 	Storage *StorageConfig `json:"storage,omitempty"`
+
+	// Backup specifies automated backup configuration
+	// +optional
+	Backup *BackupConfig `json:"backup,omitempty"`
 
 	// PodSecurityContext specifies the security context for the pod
 	// If not specified, defaults to RunAsNonRoot=true, RunAsUser=1000, FSGroup=1000
@@ -740,6 +746,51 @@ type StorageConfig struct {
 	StorageClassName *string `json:"storageClassName,omitempty"`
 }
 
+// BackupConfig specifies automated backup configuration
+type BackupConfig struct {
+	// Enabled controls whether automated backups are active
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Schedule is a cron expression used for backup execution
+	// +optional
+	Schedule string `json:"schedule,omitempty"`
+
+	// RetentionCount is the number of backups to retain
+	// +kubebuilder:default=14
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RetentionCount *int32 `json:"retentionCount,omitempty"`
+
+	// S3 specifies S3-compatible object storage destination settings
+	// +optional
+	S3 *S3BackupConfig `json:"s3,omitempty"`
+}
+
+// S3BackupConfig specifies S3-compatible object storage backup settings
+type S3BackupConfig struct {
+	// Bucket is the destination bucket name
+	Bucket string `json:"bucket"`
+
+	// Prefix is an optional object key prefix
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+
+	// Region is an optional object storage region
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// Endpoint is an optional custom endpoint for S3-compatible providers
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// AccessKeyIDSecretRef references a secret key containing object storage access key ID
+	AccessKeyIDSecretRef corev1.SecretKeySelector `json:"accessKeyIdSecretRef"`
+
+	// SecretAccessKeySecretRef references a secret key containing object storage secret access key
+	SecretAccessKeySecretRef corev1.SecretKeySelector `json:"secretAccessKeySecretRef"`
+}
+
 // CashuMintStatus defines the observed state of CashuMint
 type CashuMintStatus struct {
 	// Phase represents the current phase of the mint
@@ -845,6 +896,9 @@ const (
 
 	// ConditionTypeIngressReady indicates the ingress is ready
 	ConditionTypeIngressReady = "IngressReady"
+
+	// ConditionTypeBackupReady indicates backup resources are reconciled
+	ConditionTypeBackupReady = "BackupReady"
 )
 
 // CashuMintList contains a list of CashuMint

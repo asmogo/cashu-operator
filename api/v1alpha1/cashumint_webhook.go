@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"fmt"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -51,7 +52,7 @@ func (r *CashuMint) Default() {
 
 	// Apply defaults for Image
 	if r.Spec.Image == "" {
-		r.Spec.Image = "cashubtc/mintd:latest"
+		r.Spec.Image = DefaultMintImage
 	}
 
 	// Apply defaults for Replicas
@@ -122,6 +123,20 @@ func (r *CashuMint) Default() {
 	// Apply defaults for Storage
 	if r.Spec.Storage != nil && r.Spec.Storage.Size == "" {
 		r.Spec.Storage.Size = "10Gi"
+	}
+
+	// Apply defaults for Backup
+	if r.Spec.Backup != nil && r.Spec.Backup.Enabled {
+		if r.Spec.Backup.Schedule == "" {
+			r.Spec.Backup.Schedule = "0 */6 * * *"
+		}
+		if r.Spec.Backup.RetentionCount == nil {
+			retention := int32(14)
+			r.Spec.Backup.RetentionCount = &retention
+		}
+		if r.Spec.Backup.S3 != nil && r.Spec.Backup.S3.Prefix == "" {
+			r.Spec.Backup.S3.Prefix = r.Name
+		}
 	}
 
 	// Apply defaults for Service
@@ -277,14 +292,14 @@ func (r *CashuMint) Default() {
 func (r *CashuMint) ValidateCreate() (admission.Warnings, error) {
 	cashumintlog.Info("validate create", "name", r.Name)
 
-	return nil, r.validateCashuMint()
+	return r.getUpgradeWarnings(), r.validateCashuMint()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (r *CashuMint) ValidateUpdate(old runtime.Object) (admission.Warnings, error) {
 	cashumintlog.Info("validate update", "name", r.Name)
 
-	return nil, r.validateCashuMint()
+	return r.getUpgradeWarnings(), r.validateCashuMint()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
@@ -293,6 +308,19 @@ func (r *CashuMint) ValidateDelete() (admission.Warnings, error) {
 
 	// No validation needed for delete
 	return nil, nil
+}
+
+func (r *CashuMint) getUpgradeWarnings() admission.Warnings {
+	var warnings admission.Warnings
+
+	// CDK v0.15 introduces mint DB migrations; surface a warning at admission time.
+	if r.Spec.Database.Engine == "postgres" &&
+		strings.Contains(strings.ToLower(r.Spec.Image), "cdk-mintd:v0.15") {
+		warnings = append(warnings,
+			"CDK v0.15 includes mint database migrations; take a verified backup before rollout.")
+	}
+
+	return warnings
 }
 
 // validateCashuMint performs validation on the CashuMint resource
@@ -321,6 +349,11 @@ func (r *CashuMint) validateCashuMint() error {
 
 	// Validate Resources if specified
 	if err := r.validateResources(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	// Validate Backup configuration
+	if err := r.validateBackup(); err != nil {
 		allErrs = append(allErrs, err)
 	}
 
@@ -355,10 +388,7 @@ func (r *CashuMint) validateDatabase() error {
 			}
 		}
 	case "sqlite", "redb":
-		// For SQLite and redb, ensure storage is configured
-		if r.Spec.Storage == nil {
-			// This is acceptable as we apply defaults
-		}
+		// No additional validation needed for local engines.
 	default:
 		errs = append(errs, fmt.Errorf("invalid database engine: %s (must be postgres, sqlite, or redb)", r.Spec.Database.Engine))
 	}
@@ -465,6 +495,50 @@ func (r *CashuMint) validateResources() error {
 				}
 			}
 		}
+	}
+
+	return nil
+}
+
+// validateBackup validates the backup configuration
+func (r *CashuMint) validateBackup() error {
+	if r.Spec.Backup == nil || !r.Spec.Backup.Enabled {
+		return nil
+	}
+
+	var errs []error
+
+	if r.Spec.Database.Engine != "postgres" {
+		errs = append(errs, fmt.Errorf("spec.backup.enabled requires spec.database.engine to be postgres"))
+	}
+	if r.Spec.Database.Postgres == nil || !r.Spec.Database.Postgres.AutoProvision {
+		errs = append(errs, fmt.Errorf("spec.backup.enabled currently requires spec.database.postgres.autoProvision=true"))
+	}
+
+	if r.Spec.Backup.Schedule == "" {
+		errs = append(errs, fmt.Errorf("spec.backup.schedule is required when backup is enabled"))
+	}
+
+	if r.Spec.Backup.S3 == nil {
+		errs = append(errs, fmt.Errorf("spec.backup.s3 is required when backup is enabled"))
+	} else {
+		if r.Spec.Backup.S3.Bucket == "" {
+			errs = append(errs, fmt.Errorf("spec.backup.s3.bucket is required"))
+		}
+
+		if r.Spec.Backup.S3.AccessKeyIDSecretRef.Name == "" ||
+			r.Spec.Backup.S3.AccessKeyIDSecretRef.Key == "" {
+			errs = append(errs, fmt.Errorf("spec.backup.s3.accessKeyIdSecretRef.name and key are required"))
+		}
+
+		if r.Spec.Backup.S3.SecretAccessKeySecretRef.Name == "" ||
+			r.Spec.Backup.S3.SecretAccessKeySecretRef.Key == "" {
+			errs = append(errs, fmt.Errorf("spec.backup.s3.secretAccessKeySecretRef.name and key are required"))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("backup validation errors: %v", errs)
 	}
 
 	return nil
