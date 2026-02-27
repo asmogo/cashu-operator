@@ -302,56 +302,61 @@ func (r *CashuMintReconciler) handleError(ctx context.Context, cashuMint *mintv1
 	return ctrl.Result{}, err
 }
 
-// updateStatus updates the CashuMint status with current resource state
-func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+// updateStatus re-fetches the CashuMint from the API server (to get the latest
+// resourceVersion) and applies the desired status derived from the current
+// cluster state. Using a fresh fetch avoids the "object has been modified"
+// conflict that occurs when reconcileResources already mutated Status in memory.
+func (r *CashuMintReconciler) updateStatus(ctx context.Context, desired *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
-	// Get current deployment status
+	// Re-fetch to get the current resourceVersion.
+	current := &mintv1alpha1.CashuMint{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
+		return fmt.Errorf("failed to re-fetch CashuMint for status update: %w", err)
+	}
+
+	// Copy the status we computed during reconciliation onto the fresh object.
+	current.Status = desired.Status
+
+	// Observe current cluster resources and update status fields.
+
 	deployment := &appsv1.Deployment{}
-	deploymentKey := client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}
-	if err := r.Get(ctx, deploymentKey, deployment); err == nil {
-		cashuMint.Status.ReadyReplicas = deployment.Status.ReadyReplicas
-		cashuMint.Status.DeploymentName = deployment.Name
+	if err := r.Get(ctx, client.ObjectKey{Name: current.Name, Namespace: current.Namespace}, deployment); err == nil {
+		current.Status.ReadyReplicas = deployment.Status.ReadyReplicas
+		current.Status.DeploymentName = deployment.Name
 	} else if !apierrors.IsNotFound(err) {
 		logger.Error(err, "Failed to get Deployment for status update")
 	}
 
-	// Get service status
 	service := &corev1.Service{}
-	serviceKey := client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}
-	if err := r.Get(ctx, serviceKey, service); err == nil {
-		cashuMint.Status.ServiceName = service.Name
+	if err := r.Get(ctx, client.ObjectKey{Name: current.Name, Namespace: current.Namespace}, service); err == nil {
+		current.Status.ServiceName = service.Name
 	} else if !apierrors.IsNotFound(err) {
 		logger.Error(err, "Failed to get Service for status update")
 	}
 
-	// Get ingress status
-	if cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled {
+	if current.Spec.Ingress != nil && current.Spec.Ingress.Enabled {
 		ingress := &networkingv1.Ingress{}
-		ingressKey := client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}
-		if err := r.Get(ctx, ingressKey, ingress); err == nil {
-			cashuMint.Status.IngressName = ingress.Name
-
-			// Set URL based on ingress
+		if err := r.Get(ctx, client.ObjectKey{Name: current.Name, Namespace: current.Namespace}, ingress); err == nil {
+			current.Status.IngressName = ingress.Name
 			if len(ingress.Status.LoadBalancer.Ingress) > 0 {
 				if len(ingress.Spec.TLS) > 0 {
-					cashuMint.Status.URL = "https://" + cashuMint.Spec.Ingress.Host
+					current.Status.URL = "https://" + current.Spec.Ingress.Host
 				} else {
-					cashuMint.Status.URL = "http://" + cashuMint.Spec.Ingress.Host
+					current.Status.URL = "http://" + current.Spec.Ingress.Host
 				}
-
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+				meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{
 					Type:               mintv1alpha1.ConditionTypeIngressReady,
 					Status:             metav1.ConditionTrue,
-					ObservedGeneration: cashuMint.Generation,
+					ObservedGeneration: current.Generation,
 					Reason:             "IngressReady",
 					Message:            "Ingress is ready and accessible",
 				})
 			} else {
-				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+				meta.SetStatusCondition(&current.Status.Conditions, metav1.Condition{
 					Type:               mintv1alpha1.ConditionTypeIngressReady,
 					Status:             metav1.ConditionFalse,
-					ObservedGeneration: cashuMint.Generation,
+					ObservedGeneration: current.Generation,
 					Reason:             "IngressNotReady",
 					Message:            "Waiting for ingress to be assigned",
 				})
@@ -361,20 +366,21 @@ func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv
 		}
 	}
 
-	// Get ConfigMap status
 	configMap := &corev1.ConfigMap{}
-	configMapKey := client.ObjectKey{Name: cashuMint.Name + "-config", Namespace: cashuMint.Namespace}
-	if err := r.Get(ctx, configMapKey, configMap); err == nil {
-		cashuMint.Status.ConfigMapName = configMap.Name
+	if err := r.Get(ctx, client.ObjectKey{Name: current.Name + "-config", Namespace: current.Namespace}, configMap); err == nil {
+		current.Status.ConfigMapName = configMap.Name
 	} else if !apierrors.IsNotFound(err) {
 		logger.Error(err, "Failed to get ConfigMap for status update")
 	}
 
-	// Update observed generation
-	cashuMint.Status.ObservedGeneration = cashuMint.Generation
+	current.Status.ObservedGeneration = current.Generation
 
-	// Update status subresource
-	if err := r.Status().Update(ctx, cashuMint); err != nil {
+	if err := r.Status().Update(ctx, current); err != nil {
+		// Conflicts here are harmless — the next reconcile will try again.
+		if apierrors.IsConflict(err) {
+			logger.Info("Status update conflict, will retry on next reconcile")
+			return nil
+		}
 		logger.Error(err, "Failed to update CashuMint status")
 		return err
 	}
@@ -386,32 +392,32 @@ func (r *CashuMintReconciler) updateStatus(ctx context.Context, cashuMint *mintv
 func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
-	// Check if secret already exists and get existing password
-	var existingPassword string
+	// The postgres secret is created once and never updated — the password must
+	// not change after Postgres initialises its data directory with it.
 	secretName := cashuMint.Name + "-postgres-secret"
 	existingSecret := &corev1.Secret{}
-	if err := r.Get(ctx, client.ObjectKey{
+	secretErr := r.Get(ctx, client.ObjectKey{
 		Namespace: cashuMint.Namespace,
 		Name:      secretName,
-	}, existingSecret); err == nil {
-		// Secret exists, use the existing password
-		existingPassword = string(existingSecret.Data["password"])
-		logger.Info("Using existing postgres password from secret")
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("failed to get existing postgres secret: %w", err)
+	}, existingSecret)
+	if secretErr != nil && !apierrors.IsNotFound(secretErr) {
+		return fmt.Errorf("failed to get postgres secret: %w", secretErr)
 	}
-	// If secret doesn't exist, existingPassword remains empty and a new one will be generated
 
-	// Generate PostgreSQL Secret (with existing password if available)
-	secret, err := generators.GeneratePostgresSecret(cashuMint, r.Scheme, existingPassword)
-	if err != nil {
-		return fmt.Errorf("failed to generate PostgreSQL secret: %w", err)
-	}
-	if secret != nil {
-		if err := applyResource(ctx, r.Client, secret); err != nil {
-			return fmt.Errorf("failed to apply PostgreSQL secret: %w", err)
+	if apierrors.IsNotFound(secretErr) {
+		// Secret does not exist yet — generate and create it.
+		secret, err := generators.GeneratePostgresSecret(cashuMint, r.Scheme, "")
+		if err != nil {
+			return fmt.Errorf("failed to generate PostgreSQL secret: %w", err)
 		}
-		logger.Info("PostgreSQL secret reconciled", "secret", secret.Name)
+		if secret != nil {
+			if err := r.Client.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+				return fmt.Errorf("failed to create PostgreSQL secret: %w", err)
+			}
+			logger.Info("PostgreSQL secret created", "secret", secret.Name)
+		}
+	} else {
+		logger.Info("PostgreSQL secret already exists, keeping existing password", "secret", secretName)
 	}
 
 	// Generate PostgreSQL Service
@@ -515,7 +521,10 @@ func (r *CashuMintReconciler) reconcileBackup(ctx context.Context, cashuMint *mi
 func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
-	// Fetch the postgres password if auto-provisioned
+	// Fetch the postgres password if auto-provisioned.
+	// reconcilePostgreSQL runs before this, so the secret should already exist.
+	// If it doesn't exist yet, return an error to requeue rather than writing
+	// an empty password into config.toml (which would cause auth failures in postgres).
 	var dbPassword string
 	if cashuMint.Spec.Database.Engine == "postgres" &&
 		cashuMint.Spec.Database.Postgres != nil &&
@@ -526,14 +535,11 @@ func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint 
 			Namespace: cashuMint.Namespace,
 			Name:      secretName,
 		}, secret); err != nil {
-			if !apierrors.IsNotFound(err) {
-				return fmt.Errorf("failed to get postgres secret: %w", err)
-			}
-			// Secret doesn't exist yet, will be created in reconcilePostgres
-			logger.Info("Postgres secret not found yet, will reconcile later")
-			dbPassword = ""
-		} else {
-			dbPassword = string(secret.Data["password"])
+			return fmt.Errorf("postgres secret %s not ready yet: %w", secretName, err)
+		}
+		dbPassword = string(secret.Data["password"])
+		if dbPassword == "" {
+			return fmt.Errorf("postgres secret %s exists but password key is empty", secretName)
 		}
 	}
 
