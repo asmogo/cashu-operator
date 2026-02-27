@@ -62,11 +62,11 @@ func (r *CashuMint) Default() {
 
 	// Apply defaults for Database
 	if r.Spec.Database.Engine == "" {
-		r.Spec.Database.Engine = "postgres"
+		r.Spec.Database.Engine = DatabaseEnginePostgres
 	}
 
 	// Apply defaults for PostgreSQL if engine is postgres
-	if r.Spec.Database.Engine == "postgres" && r.Spec.Database.Postgres != nil {
+	if r.Spec.Database.Engine == DatabaseEnginePostgres && r.Spec.Database.Postgres != nil {
 		if r.Spec.Database.Postgres.TLSMode == "" {
 			// Auto-provisioned postgres runs inside the cluster without TLS;
 			// external postgres should use TLS by default.
@@ -97,7 +97,7 @@ func (r *CashuMint) Default() {
 	}
 
 	// Apply defaults for SQLite if engine is sqlite
-	if r.Spec.Database.Engine == "sqlite" && r.Spec.Database.SQLite != nil {
+	if r.Spec.Database.Engine == DatabaseEngineSQLite && r.Spec.Database.SQLite != nil {
 		if r.Spec.Database.SQLite.DataDir == "" {
 			r.Spec.Database.SQLite.DataDir = "/data"
 		}
@@ -416,7 +416,7 @@ func (r *CashuMint) validateDatabase() error {
 	var errs []error
 
 	switch r.Spec.Database.Engine {
-	case "postgres":
+	case DatabaseEnginePostgres:
 		if r.Spec.Database.Postgres == nil {
 			errs = append(errs, fmt.Errorf("spec.database.postgres is required when engine is postgres"))
 		} else {
@@ -434,7 +434,7 @@ func (r *CashuMint) validateDatabase() error {
 				errs = append(errs, fmt.Errorf("spec.database.postgres cannot specify both url and urlSecretRef"))
 			}
 		}
-	case "sqlite", "redb":
+	case DatabaseEngineSQLite, DatabaseEngineRedb:
 		// No additional validation needed for local engines.
 	default:
 		errs = append(errs, fmt.Errorf("invalid database engine: %s (must be postgres, sqlite, or redb)", r.Spec.Database.Engine))
@@ -451,7 +451,7 @@ func (r *CashuMint) validateLightning() error {
 	var errs []error
 
 	switch r.Spec.Lightning.Backend {
-	case "lnd":
+	case LightningBackendLND:
 		if r.Spec.Lightning.LND == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.lnd is required when backend is lnd"))
 		} else {
@@ -459,7 +459,7 @@ func (r *CashuMint) validateLightning() error {
 				errs = append(errs, fmt.Errorf("spec.lightning.lnd.address is required"))
 			}
 		}
-	case "cln":
+	case LightningBackendCLN:
 		if r.Spec.Lightning.CLN == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.cln is required when backend is cln"))
 		} else {
@@ -467,7 +467,7 @@ func (r *CashuMint) validateLightning() error {
 				errs = append(errs, fmt.Errorf("spec.lightning.cln.rpcPath is required"))
 			}
 		}
-	case "lnbits":
+	case LightningBackendLNBits:
 		if r.Spec.Lightning.LNBits == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.lnbits is required when backend is lnbits"))
 		} else {
@@ -475,11 +475,11 @@ func (r *CashuMint) validateLightning() error {
 				errs = append(errs, fmt.Errorf("spec.lightning.lnbits.api is required"))
 			}
 		}
-	case "fakewallet":
+	case LightningBackendFakeWallet:
 		if r.Spec.Lightning.FakeWallet == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.fakeWallet is required when backend is fakewallet"))
 		}
-	case "grpcprocessor":
+	case LightningBackendGRPCProcessor:
 		if r.Spec.Lightning.GRPCProcessor == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor is required when backend is grpcprocessor"))
 		} else {

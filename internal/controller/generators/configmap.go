@@ -170,7 +170,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 
 	// [database.postgres] — only present when engine = "postgres"
 	// Note: there is NO [database.sqlite] section; sqlite needs no subsection config.
-	if mint.Spec.Database.Engine == "postgres" && mint.Spec.Database.Postgres != nil {
+	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres && mint.Spec.Database.Postgres != nil {
 		buf.WriteString("\n[database.postgres]\n")
 
 		if mint.Spec.Database.Postgres.AutoProvision {
@@ -231,7 +231,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 
 	// Lightning backend-specific sections
 	switch mint.Spec.Lightning.Backend {
-	case "lnd":
+	case mintv1alpha1.LightningBackendLND:
 		if mint.Spec.Lightning.LND != nil {
 			buf.WriteString("\n[lnd]\n")
 			buf.WriteString(fmt.Sprintf("address = %q\n", mint.Spec.Lightning.LND.Address))
@@ -249,7 +249,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 			}
 		}
 
-	case "cln":
+	case mintv1alpha1.LightningBackendCLN:
 		if mint.Spec.Lightning.CLN != nil {
 			buf.WriteString("\n[cln]\n")
 			buf.WriteString(fmt.Sprintf("rpc_path = %q\n", mint.Spec.Lightning.CLN.RPCPath))
@@ -261,7 +261,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 			}
 		}
 
-	case "lnbits":
+	case mintv1alpha1.LightningBackendLNBits:
 		if mint.Spec.Lightning.LNBits != nil {
 			buf.WriteString("\n[lnbits]\n")
 			buf.WriteString(fmt.Sprintf("lnbits_api = %q\n", mint.Spec.Lightning.LNBits.API))
@@ -271,7 +271,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 			}
 		}
 
-	case "fakewallet":
+	case mintv1alpha1.LightningBackendFakeWallet:
 		buf.WriteString("\n[fake_wallet]\n")
 		supportedUnits := []string{"sat"}
 		feePercent := 0.02
@@ -302,7 +302,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) (string
 		buf.WriteString(fmt.Sprintf("min_delay_time = %d\n", minDelayTime))
 		buf.WriteString(fmt.Sprintf("max_delay_time = %d\n", maxDelayTime))
 
-	case "grpcprocessor":
+	case mintv1alpha1.LightningBackendGRPCProcessor:
 		if mint.Spec.Lightning.GRPCProcessor != nil {
 			buf.WriteString("\n[grpc_processor]\n")
 

@@ -21,6 +21,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Database engine values
+const (
+	DatabaseEnginePostgres = "postgres"
+	DatabaseEngineSQLite   = "sqlite"
+	DatabaseEngineRedb     = "redb"
+)
+
+// Lightning backend values
+const (
+	LightningBackendLND           = "lnd"
+	LightningBackendCLN           = "cln"
+	LightningBackendLNBits        = "lnbits"
+	LightningBackendFakeWallet    = "fakewallet"
+	LightningBackendGRPCProcessor = "grpcprocessor"
+)
+
 // CashuMint is the Schema for the cashumints API
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status

@@ -200,7 +200,7 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 	}
 
 	// Phase 4: Reconcile PVC (for SQLite/redb)
-	if cashuMint.Spec.Database.Engine == "sqlite" || cashuMint.Spec.Database.Engine == "redb" {
+	if cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineSQLite || cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineRedb {
 		logger.Info("Reconciling PVC for local database")
 		if err := r.reconcilePVC(ctx, cashuMint); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to reconcile PVC: %w", err)
@@ -526,7 +526,7 @@ func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint 
 	// If it doesn't exist yet, return an error to requeue rather than writing
 	// an empty password into config.toml (which would cause auth failures in postgres).
 	var dbPassword string
-	if cashuMint.Spec.Database.Engine == "postgres" &&
+	if cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres &&
 		cashuMint.Spec.Database.Postgres != nil &&
 		cashuMint.Spec.Database.Postgres.AutoProvision {
 		secretName := cashuMint.Name + "-postgres-secret"

@@ -92,7 +92,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	containers := []corev1.Container{}
 
 	// Add generic gRPC processor sidecar if enabled
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled {
@@ -335,7 +335,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	// Database configuration
 	// Note: For auto-provisioned postgres, the URL with password is written directly into the config file.
 	// For external postgres with URLSecretRef, we still inject via environment variable.
-	if mint.Spec.Database.Engine == "postgres" && mint.Spec.Database.Postgres != nil {
+	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres && mint.Spec.Database.Postgres != nil {
 		if mint.Spec.Database.Postgres.URLSecretRef != nil {
 			envVars = append(envVars, corev1.EnvVar{
 				Name: "CDK_MINTD_DATABASE_URL",
@@ -366,7 +366,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	}
 
 	// LNBits API keys from secrets
-	if mint.Spec.Lightning.Backend == "lnbits" && mint.Spec.Lightning.LNBits != nil {
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLNBits && mint.Spec.Lightning.LNBits != nil {
 		envVars = append(envVars, corev1.EnvVar{
 			Name: "LNBITS_ADMIN_API_KEY",
 			ValueFrom: &corev1.EnvVarSource{
@@ -436,7 +436,7 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	}
 
 	// LND macaroon and cert
-	if mint.Spec.Lightning.Backend == "lnd" && mint.Spec.Lightning.LND != nil {
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLND && mint.Spec.Lightning.LND != nil {
 		if mint.Spec.Lightning.LND.MacaroonSecretRef != nil {
 			mounts = append(mounts, corev1.VolumeMount{
 				Name:      "lnd-macaroon",
@@ -456,7 +456,7 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	}
 
 	// gRPC processor TLS certificates
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
 		mounts = append(mounts, corev1.VolumeMount{
@@ -485,7 +485,7 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// Data volume - either PVC or emptyDir
-	if mint.Spec.Database.Engine == "sqlite" || mint.Spec.Database.Engine == "redb" {
+	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineSQLite || mint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineRedb {
 		// Use PVC for SQLite/redb
 		volumes = append(volumes, corev1.Volume{
 			Name: "data",
@@ -506,7 +506,7 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// LND secret volumes
-	if mint.Spec.Lightning.Backend == "lnd" && mint.Spec.Lightning.LND != nil {
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLND && mint.Spec.Lightning.LND != nil {
 		if mint.Spec.Lightning.LND.MacaroonSecretRef != nil {
 			volumes = append(volumes, corev1.Volume{
 				Name: "lnd-macaroon",
@@ -530,7 +530,7 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// gRPC processor TLS volume
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
 		volumes = append(volumes, corev1.Volume{
@@ -544,7 +544,7 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// Sidecar processor TLS volume
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled &&
