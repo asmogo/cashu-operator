@@ -142,13 +142,14 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 		if mint.Spec.Database.Postgres != nil {
 			buf.WriteString("\n[database.postgres]\n")
 
-			if mint.Spec.Database.Postgres.AutoProvision {
-				buf.WriteString("# Database URL loaded from secret via CDK_MINTD_DATABASE_URL environment variable\n")
-			} else if mint.Spec.Database.Postgres.URL != "" {
+			if mint.Spec.Database.Postgres.URL != "" {
 				// Direct URL specified (not recommended for production)
 				buf.WriteString(fmt.Sprintf("url = %q\n", mint.Spec.Database.Postgres.URL))
 			} else {
-				buf.WriteString("# Database URL loaded from secret via CDK_MINTD_DATABASE_URL environment variable\n")
+				// Placeholder URL — the actual value is loaded at runtime from the
+				// CDK_MINTD_DATABASE_URL environment variable. The field must be
+				// present so the TOML section deserializes correctly.
+				buf.WriteString("url = \"\"\n")
 			}
 
 			tlsMode := mint.Spec.Database.Postgres.TLSMode
@@ -289,9 +290,18 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 
 	case "grpcprocessor":
 		if mint.Spec.Lightning.GRPCProcessor != nil {
+			address, port, err := resolveGRPCProcessorEndpoint(mint)
+			if err != nil {
+				return "", err
+			}
+
 			buf.WriteString("\n[grpc_processor]\n")
-			buf.WriteString(fmt.Sprintf("addr = %q\n", mint.Spec.Lightning.GRPCProcessor.Address))
-			buf.WriteString(fmt.Sprintf("port = %d\n", mint.Spec.Lightning.GRPCProcessor.Port))
+			// tonic requires the address to include a URL scheme
+			if !strings.HasPrefix(address, "http://") && !strings.HasPrefix(address, "https://") {
+				address = "http://" + address
+			}
+			buf.WriteString(fmt.Sprintf("addr = %q\n", address))
+			buf.WriteString(fmt.Sprintf("port = %d\n", port))
 
 			// Default supported units
 			supportedUnits := []string{"sat"}
@@ -455,4 +465,25 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint) (string, error) {
 	}
 
 	return buf.String(), nil
+}
+
+func resolveGRPCProcessorEndpoint(mint *mintv1alpha1.CashuMint) (string, int32, error) {
+	grpcProcessor := mint.Spec.Lightning.GRPCProcessor
+	if grpcProcessor == nil {
+		return "", 0, fmt.Errorf("grpc processor backend requires spec.lightning.grpcProcessor")
+	}
+
+	if grpcProcessor.ProcessorRef != "" {
+		processor, ok := FindPaymentProcessorByName(mint, grpcProcessor.ProcessorRef)
+		if !ok {
+			return "", 0, fmt.Errorf("spec.lightning.grpcProcessor.processorRef %q not found in spec.paymentProcessors", grpcProcessor.ProcessorRef)
+		}
+		return PaymentProcessorServiceAddress(mint, processor), EffectivePaymentProcessorPort(processor), nil
+	}
+
+	if grpcProcessor.Address == "" || grpcProcessor.Port == 0 {
+		return "", 0, fmt.Errorf("spec.lightning.grpcProcessor.address and port are required when processorRef is not set")
+	}
+
+	return grpcProcessor.Address, grpcProcessor.Port, nil
 }

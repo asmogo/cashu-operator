@@ -1,0 +1,57 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-stripe-processor
+spec:
+  image: cashubtc/mintd:0.15.0
+  mintInfo:
+    url: https://stripe-mint.example.com
+    name: "Stripe Cashu Mint"
+    description: "Cashu mint using the Stripe gRPC payment processor"
+    mnemonicSecretRef:
+      name: cashumint-stripe-processor-mnemonic
+      key: mnemonic
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 20Gi
+        version: "16"
+  paymentProcessors:
+    - name: stripe-primary
+      image: asmogo/cdk-stripe-payment-processor:sha-7512cbe
+      port: 50051
+      env:
+        - name: STRIPE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: stripe-credentials
+              key: STRIPE_API_KEY
+        - name: STRIPE_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: stripe-credentials
+              key: STRIPE_WEBHOOK_SECRET
+        - name: SERVER_PORT
+          value: "50051"
+  lightning:
+    backend: grpcprocessor
+    grpcProcessor:
+      processorRef: stripe-primary
+      supportedUnits:
+        - usd
+  ingress:
+    enabled: true
+    host: stripe-mint.example.com
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt
+        issuerKind: ClusterIssuer
+  service:
+    type: ClusterIP
+  logging:
+    level: info
+    format: json

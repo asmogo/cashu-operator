@@ -763,4 +763,112 @@ var _ = Describe("CashuMint Controller", func() {
 			Expect(backupCondition.Reason).To(Equal("BackupNotReconciled"))
 		})
 	})
+
+	Context("When using managed payment processors", func() {
+		const resourceName = "test-managed-processors"
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			resource := &mintv1alpha1.CashuMint{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mintv1alpha1.CashuMintSpec{
+					MintInfo: mintv1alpha1.MintInfo{
+						URL: "http://test-mint.local",
+					},
+					Database: mintv1alpha1.DatabaseConfig{
+						Engine: "sqlite",
+						SQLite: &mintv1alpha1.SQLiteConfig{
+							DataDir: "/data",
+						},
+					},
+					PaymentProcessors: []mintv1alpha1.PaymentProcessorSpec{
+						{
+							Name:  "spark-primary",
+							Image: "ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0",
+							Port:  50051,
+						},
+						{
+							Name:  "spark-secondary",
+							Image: "ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0",
+							Port:  50051,
+						},
+					},
+					Lightning: mintv1alpha1.LightningConfig{
+						Backend: "grpcprocessor",
+						GRPCProcessor: &mintv1alpha1.GRPCProcessorConfig{
+							ProcessorRef:   "spark-primary",
+							SupportedUnits: []string{"sat"},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mintv1alpha1.CashuMint{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			} else {
+				Expect(errors.IsNotFound(err)).To(BeTrue())
+			}
+		})
+
+		It("should reconcile processor workloads and resolve grpc endpoint from processorRef", func() {
+			controllerReconciler := &CashuMintReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			var result reconcile.Result
+			var err error
+			for i := 0; i < 3; i++ {
+				result, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			Expect(result.RequeueAfter).To(Equal(NotReadyRetryInterval))
+
+			primaryName := generators.PaymentProcessorResourceName(resourceName, "spark-primary")
+			secondaryName := generators.PaymentProcessorResourceName(resourceName, "spark-secondary")
+
+			primaryDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: primaryName, Namespace: "default"}, primaryDeployment)).To(Succeed())
+			secondaryDeployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: secondaryName, Namespace: "default"}, secondaryDeployment)).To(Succeed())
+
+			primaryService := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: primaryName, Namespace: "default"}, primaryService)).To(Succeed())
+			secondaryService := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: secondaryName, Namespace: "default"}, secondaryService)).To(Succeed())
+
+			mintDeployment := &appsv1.Deployment{}
+			err = k8sClient.Get(ctx, typeNamespacedName, mintDeployment)
+			Expect(errors.IsNotFound(err)).To(BeTrue())
+
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)).To(Succeed())
+			configToml := configMap.Data["config.toml"]
+			Expect(configToml).To(ContainSubstring(`addr = "test-managed-processors-processor-spark-primary.default.svc.cluster.local"`))
+			Expect(configToml).To(ContainSubstring("port = 50051"))
+
+			updated := &mintv1alpha1.CashuMint{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
+			readyCondition := meta.FindStatusCondition(updated.Status.Conditions, mintv1alpha1.ConditionTypeReady)
+			Expect(readyCondition).NotTo(BeNil())
+			Expect(readyCondition.Reason).To(Equal("DependenciesNotReady"))
+		})
+	})
 })

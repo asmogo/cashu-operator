@@ -197,22 +197,14 @@ func GeneratePostgresStatefulSet(mint *mintv1alpha1.CashuMint, scheme *runtime.S
 								// It only runs if postgres is already initialized
 								`if [ -f /var/lib/postgresql/data/pgdata/PG_VERSION ]; then
   echo "Database already initialized, ensuring password is correct..."
-  # Start postgres temporarily in the background
-  su-exec postgres postgres -D /var/lib/postgresql/data/pgdata &
-  PG_PID=$!
-  # Wait for postgres to be ready
-  for i in $(seq 1 30); do
-    if pg_isready -U ` + postgresUser + ` -d ` + postgresDatabase + ` > /dev/null 2>&1; then
-      echo "Postgres is ready"
-      break
-    fi
-    sleep 1
-  done
-  # Update the password
-  psql -U ` + postgresUser + ` -d ` + postgresDatabase + ` -c "ALTER USER ` + postgresUser + ` WITH PASSWORD '${POSTGRES_PASSWORD}';" || true
-  # Stop postgres
-  kill $PG_PID
-  wait $PG_PID
+  # Fix ownership so postgres can start
+  chown -R 999:999 /var/lib/postgresql/data/pgdata
+  # Start postgres temporarily with local trust auth so we can reset the password
+  su-exec postgres pg_ctl -D /var/lib/postgresql/data/pgdata -o "-c listen_addresses='' -c local_preload_libraries=''" -w start
+  # Update the password using local socket (trusted via peer auth)
+  su-exec postgres psql -d ` + postgresDatabase + ` -c "ALTER USER ` + postgresUser + ` WITH PASSWORD '${POSTGRES_PASSWORD}';"
+  # Stop postgres gracefully
+  su-exec postgres pg_ctl -D /var/lib/postgresql/data/pgdata -w stop
   echo "Password updated successfully"
 else
   echo "Database not yet initialized, skipping password update"

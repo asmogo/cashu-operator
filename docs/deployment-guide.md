@@ -29,7 +29,7 @@ Evaluate the Lightning payment processor your mint needs:
 | **CLN**          | Core Lightning RPC socket                        | Self-hosted CLN nodes    | Shared volume or network file system for `rpcPath`. |
 | **LNBits**       | LNBits API integration                           | LNBits-managed wallets   | Admin and invoice keys via Secrets, optional retro API compatibility. |
 | **FakeWallet**   | In-memory mock wallet                            | Development/testing       | Not for production. Supports artificial latency range. |
-| **gRPC Processor** | External gRPC payment processor (custom)      | Custom enterprise flows  | Host/port, TLS secret (optional). Mounts cert/key pair if provided. |
+| **gRPC Processor** | External or operator-managed gRPC payment processor | Custom enterprise flows  | Use either `grpcProcessor.address`/`port` or `grpcProcessor.processorRef` to `spec.paymentProcessors[]`; TLS secret optional. |
 
 ### 1.3 Resource Requirements
 
@@ -246,19 +246,54 @@ Ensure Secrets contain the API keys. TLS validation uses standard HTTP client in
 
 ```yaml
 spec:
+  paymentProcessors:
+    - name: spark-primary
+      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
+      port: 50051
+    - name: spark-secondary
+      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
+      port: 50051
   lightning:
     backend: grpcprocessor
     grpcProcessor:
-      address: processor-service.cashu:443
-      port: 443
+      processorRef: spark-primary
       supportedUnits: ["sat"]
       tlsSecretRef:
         name: grpc-client-cert
         key: client-bundle # Directory mount with client.crt/client.key/ca.crt
 ```
 
+- `spec.paymentProcessors[]` lets the operator deploy multiple processor workloads per mint.
+- `grpcProcessor.processorRef` selects which managed processor is active for the mint.
+- For external processors, omit `processorRef` and set `address` + `port`.
 - TLS Secret must contain files named `client.crt`, `client.key`, `ca.crt`. Operator mounts the secret at `/secrets/grpc`.
 - Use `supportedUnits` to advertise allowed denominations.
+
+Example for the Stripe processor image (`asmogo/cdk-stripe-payment-processor:sha-7512cbe`):
+
+```yaml
+spec:
+  paymentProcessors:
+    - name: stripe-primary
+      image: asmogo/cdk-stripe-payment-processor:sha-7512cbe
+      port: 50051
+      env:
+        - name: STRIPE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: stripe-credentials
+              key: STRIPE_API_KEY
+        - name: STRIPE_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: stripe-credentials
+              key: STRIPE_WEBHOOK_SECRET
+  lightning:
+    backend: grpcprocessor
+    grpcProcessor:
+      processorRef: stripe-primary
+      supportedUnits: ["usd"]
+```
 
 ---
 

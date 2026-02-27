@@ -252,6 +252,20 @@ func (r *CashuMint) Default() {
 		}
 	}
 
+	for i := range r.Spec.PaymentProcessors {
+		processor := &r.Spec.PaymentProcessors[i]
+		if processor.ImagePullPolicy == "" {
+			processor.ImagePullPolicy = "IfNotPresent"
+		}
+		if processor.Replicas == nil {
+			replicas := int32(1)
+			processor.Replicas = &replicas
+		}
+		if processor.Port == 0 {
+			processor.Port = 50051
+		}
+	}
+
 	// Apply defaults for LDK Node
 	if r.Spec.LDKNode != nil && r.Spec.LDKNode.Enabled {
 		if r.Spec.LDKNode.FeePercent == nil {
@@ -339,6 +353,11 @@ func (r *CashuMint) validateCashuMint() error {
 
 	// Validate Lightning configuration
 	if err := r.validateLightning(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	// Validate payment processor configuration
+	if err := r.validatePaymentProcessors(); err != nil {
 		allErrs = append(allErrs, err)
 	}
 
@@ -436,11 +455,22 @@ func (r *CashuMint) validateLightning() error {
 		if r.Spec.Lightning.GRPCProcessor == nil {
 			errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor is required when backend is grpcprocessor"))
 		} else {
-			if r.Spec.Lightning.GRPCProcessor.Address == "" {
-				errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address is required"))
-			}
-			if r.Spec.Lightning.GRPCProcessor.Port == 0 {
-				errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.port is required"))
+			hasAddress := r.Spec.Lightning.GRPCProcessor.Address != ""
+			hasPort := r.Spec.Lightning.GRPCProcessor.Port != 0
+			if r.Spec.Lightning.GRPCProcessor.ProcessorRef != "" {
+				if hasAddress || hasPort {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address and port must be omitted when processorRef is set"))
+				}
+				if !r.hasPaymentProcessor(r.Spec.Lightning.GRPCProcessor.ProcessorRef) {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.processorRef %q not found in spec.paymentProcessors", r.Spec.Lightning.GRPCProcessor.ProcessorRef))
+				}
+			} else {
+				if !hasAddress {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address is required"))
+				}
+				if !hasPort {
+					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.port is required"))
+				}
 			}
 		}
 	default:
@@ -451,6 +481,53 @@ func (r *CashuMint) validateLightning() error {
 		return fmt.Errorf("lightning validation errors: %v", errs)
 	}
 	return nil
+}
+
+func (r *CashuMint) validatePaymentProcessors() error {
+	if len(r.Spec.PaymentProcessors) == 0 {
+		return nil
+	}
+
+	var errs []error
+	seen := make(map[string]struct{}, len(r.Spec.PaymentProcessors))
+
+	for i := range r.Spec.PaymentProcessors {
+		processor := r.Spec.PaymentProcessors[i]
+		path := fmt.Sprintf("spec.paymentProcessors[%d]", i)
+
+		if processor.Name == "" {
+			errs = append(errs, fmt.Errorf("%s.name is required", path))
+		} else {
+			if _, exists := seen[processor.Name]; exists {
+				errs = append(errs, fmt.Errorf("duplicate payment processor name %q", processor.Name))
+			}
+			seen[processor.Name] = struct{}{}
+
+			resourceName := fmt.Sprintf("%s-processor-%s", r.Name, processor.Name)
+			if len(resourceName) > 63 {
+				errs = append(errs, fmt.Errorf("%s.name %q generates resource name %q longer than 63 characters", path, processor.Name, resourceName))
+			}
+		}
+
+		if processor.Image == "" {
+			errs = append(errs, fmt.Errorf("%s.image is required", path))
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("payment processor validation errors: %v", errs)
+	}
+
+	return nil
+}
+
+func (r *CashuMint) hasPaymentProcessor(name string) bool {
+	for i := range r.Spec.PaymentProcessors {
+		if r.Spec.PaymentProcessors[i].Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // validateIngress validates the ingress configuration

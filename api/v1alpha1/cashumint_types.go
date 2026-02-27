@@ -72,6 +72,11 @@ type CashuMintSpec struct {
 	// Lightning specifies the Lightning Network backend configuration
 	Lightning LightningConfig `json:"lightning"`
 
+	// PaymentProcessors defines operator-managed payment processor workloads available to this mint.
+	// +kubebuilder:validation:MaxItems=10
+	// +optional
+	PaymentProcessors []PaymentProcessorSpec `json:"paymentProcessors,omitempty"`
+
 	// LDKNode specifies optional LDK node configuration
 	// +optional
 	LDKNode *LDKNodeConfig `json:"ldkNode,omitempty"`
@@ -429,13 +434,22 @@ type FakeWalletConfig struct {
 
 // GRPCProcessorConfig specifies gRPC payment processor configuration
 type GRPCProcessorConfig struct {
+	// ProcessorRef references a processor declared in spec.paymentProcessors by name.
+	// When set, address and port are derived from the managed processor Service.
+	// +optional
+	ProcessorRef string `json:"processorRef,omitempty"`
+
 	// Address is the gRPC processor address
-	Address string `json:"address"`
+	// Required when processorRef is not set.
+	// +optional
+	Address string `json:"address,omitempty"`
 
 	// Port is the gRPC processor port
+	// Required when processorRef is not set.
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
-	Port int32 `json:"port"`
+	// +optional
+	Port int32 `json:"port,omitempty"`
 
 	// SupportedUnits is the list of supported units
 	// +kubebuilder:default={"sat"}
@@ -445,6 +459,52 @@ type GRPCProcessorConfig struct {
 	// If provided, the directory should contain client.crt, client.key, ca.crt
 	// +optional
 	TLSSecretRef *corev1.SecretKeySelector `json:"tlsSecretRef,omitempty"`
+}
+
+// PaymentProcessorSpec defines an operator-managed payment processor workload.
+type PaymentProcessorSpec struct {
+	// Name identifies the processor and is referenced by spec.lightning.grpcProcessor.processorRef.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=30
+	Name string `json:"name"`
+
+	// Image is the container image for the payment processor.
+	Image string `json:"image"`
+
+	// ImagePullPolicy specifies when to pull the processor image.
+	// +kubebuilder:default="IfNotPresent"
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
+	// +optional
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+
+	// Replicas is the number of processor replicas.
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Port is the gRPC port exposed by the payment processor.
+	// +kubebuilder:default=50051
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// Command overrides the container entrypoint.
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// Args specifies additional container arguments.
+	// +optional
+	Args []string `json:"args,omitempty"`
+
+	// Env specifies environment variables for the payment processor container.
+	// +optional
+	Env []corev1.EnvVar `json:"env,omitempty"`
+
+	// Resources specifies compute resource requirements for the processor.
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
 // LDKNodeConfig specifies LDK node configuration

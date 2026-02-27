@@ -49,6 +49,8 @@ const (
 
 	// Finalizer name
 	cashuMintFinalizer = "mint.cashu.asmogo.github.io/finalizer"
+
+	lightningBackendGRPCProcessor = "grpcprocessor"
 )
 
 // CashuMintReconciler reconciles a CashuMint object
@@ -215,6 +217,52 @@ func (r *CashuMintReconciler) cleanupOwnedResources(ctx context.Context, cashuMi
 		}
 	}
 
+	processorDeployments := &appsv1.DeploymentList{}
+	if err := r.List(
+		ctx,
+		processorDeployments,
+		client.InNamespace(cashuMint.Namespace),
+		client.MatchingLabels{
+			"app.kubernetes.io/instance":   cashuMint.Name,
+			"app.kubernetes.io/component":  "payment-processor",
+			"app.kubernetes.io/managed-by": "cashu-operator",
+		},
+	); err != nil {
+		return false, fmt.Errorf("failed to list managed payment processor deployments: %w", err)
+	}
+	for i := range processorDeployments.Items {
+		pending, err := r.cleanupOwnedResource(ctx, cashuMint, &processorDeployments.Items[i])
+		if err != nil {
+			return false, err
+		}
+		if pending {
+			resourcesPendingDeletion = true
+		}
+	}
+
+	processorServices := &corev1.ServiceList{}
+	if err := r.List(
+		ctx,
+		processorServices,
+		client.InNamespace(cashuMint.Namespace),
+		client.MatchingLabels{
+			"app.kubernetes.io/instance":   cashuMint.Name,
+			"app.kubernetes.io/component":  "payment-processor",
+			"app.kubernetes.io/managed-by": "cashu-operator",
+		},
+	); err != nil {
+		return false, fmt.Errorf("failed to list managed payment processor services: %w", err)
+	}
+	for i := range processorServices.Items {
+		pending, err := r.cleanupOwnedResource(ctx, cashuMint, &processorServices.Items[i])
+		if err != nil {
+			return false, err
+		}
+		if pending {
+			resourcesPendingDeletion = true
+		}
+	}
+
 	return !resourcesPendingDeletion, nil
 }
 
@@ -347,13 +395,19 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		}
 	}
 
-	// Phase 3: Reconcile ConfigMap
+	// Phase 3: Reconcile managed payment processors
+	logger.Info("Reconciling managed payment processors")
+	if err := r.reconcilePaymentProcessors(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to reconcile payment processors: %w", err)
+	}
+
+	// Phase 4: Reconcile ConfigMap
 	logger.Info("Reconciling ConfigMap")
 	if err := r.reconcileConfigMap(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile ConfigMap: %w", err)
 	}
 
-	// Phase 4: Reconcile PVC (for SQLite/redb)
+	// Phase 5: Reconcile PVC (for SQLite/redb)
 	if cashuMint.Spec.Database.Engine == "sqlite" || cashuMint.Spec.Database.Engine == "redb" {
 		logger.Info("Reconciling PVC for local database")
 		if err := r.reconcilePVC(ctx, cashuMint); err != nil {
@@ -376,19 +430,19 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		Message:            fmt.Sprintf("Lightning backend %q configuration is ready", cashuMint.Spec.Lightning.Backend),
 	})
 
-	// Phase 5: Reconcile Deployment
+	// Phase 6: Reconcile Deployment
 	logger.Info("Reconciling Deployment")
 	if err := r.reconcileDeployment(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile Deployment: %w", err)
 	}
 
-	// Phase 6: Reconcile Service
+	// Phase 7: Reconcile Service
 	logger.Info("Reconciling Service")
 	if err := r.reconcileService(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile Service: %w", err)
 	}
 
-	// Phase 7: Reconcile Ingress (if enabled)
+	// Phase 8: Reconcile Ingress (if enabled)
 	if cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled {
 		logger.Info("Reconciling Ingress")
 		if err := r.reconcileIngress(ctx, cashuMint); err != nil {
@@ -679,6 +733,97 @@ func (r *CashuMintReconciler) reconcileBackup(ctx context.Context, cashuMint *mi
 	return nil
 }
 
+// reconcilePaymentProcessors reconciles managed payment processor Deployments and Services.
+func (r *CashuMintReconciler) reconcilePaymentProcessors(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	logger := log.FromContext(ctx)
+	desiredProcessors := make(map[string]struct{}, len(cashuMint.Spec.PaymentProcessors))
+
+	for i := range cashuMint.Spec.PaymentProcessors {
+		processor := &cashuMint.Spec.PaymentProcessors[i]
+		desiredProcessors[processor.Name] = struct{}{}
+
+		deployment, err := generators.GeneratePaymentProcessorDeployment(cashuMint, processor, r.Scheme)
+		if err != nil {
+			return fmt.Errorf("failed to generate payment processor deployment %q: %w", processor.Name, err)
+		}
+		if err := applyResource(ctx, r.Client, deployment); err != nil {
+			return fmt.Errorf("failed to apply payment processor deployment %q: %w", processor.Name, err)
+		}
+		logger.Info("Payment processor deployment reconciled", "processor", processor.Name, "deployment", deployment.Name)
+
+		service, err := generators.GeneratePaymentProcessorService(cashuMint, processor, r.Scheme)
+		if err != nil {
+			return fmt.Errorf("failed to generate payment processor service %q: %w", processor.Name, err)
+		}
+		if err := applyResource(ctx, r.Client, service); err != nil {
+			return fmt.Errorf("failed to apply payment processor service %q: %w", processor.Name, err)
+		}
+		logger.Info("Payment processor service reconciled", "processor", processor.Name, "service", service.Name)
+	}
+
+	if err := r.cleanupStalePaymentProcessorResources(ctx, cashuMint, desiredProcessors); err != nil {
+		return fmt.Errorf("failed to cleanup stale payment processor resources: %w", err)
+	}
+
+	return nil
+}
+
+func (r *CashuMintReconciler) cleanupStalePaymentProcessorResources(
+	ctx context.Context,
+	cashuMint *mintv1alpha1.CashuMint,
+	desired map[string]struct{},
+) error {
+	processorLabels := client.MatchingLabels{
+		"app.kubernetes.io/instance":   cashuMint.Name,
+		"app.kubernetes.io/component":  "payment-processor",
+		"app.kubernetes.io/managed-by": "cashu-operator",
+	}
+
+	deployments := &appsv1.DeploymentList{}
+	if err := r.List(ctx, deployments, client.InNamespace(cashuMint.Namespace), processorLabels); err != nil {
+		return fmt.Errorf("failed to list payment processor deployments: %w", err)
+	}
+
+	for i := range deployments.Items {
+		deployment := &deployments.Items[i]
+		if !metav1.IsControlledBy(deployment, cashuMint) {
+			continue
+		}
+
+		processorName := deployment.Labels["app.kubernetes.io/processor"]
+		if _, exists := desired[processorName]; exists {
+			continue
+		}
+
+		if err := deleteResourceIfExists(ctx, r.Client, deployment); err != nil {
+			return fmt.Errorf("failed to delete stale payment processor deployment %q: %w", deployment.Name, err)
+		}
+	}
+
+	services := &corev1.ServiceList{}
+	if err := r.List(ctx, services, client.InNamespace(cashuMint.Namespace), processorLabels); err != nil {
+		return fmt.Errorf("failed to list payment processor services: %w", err)
+	}
+
+	for i := range services.Items {
+		service := &services.Items[i]
+		if !metav1.IsControlledBy(service, cashuMint) {
+			continue
+		}
+
+		processorName := service.Labels["app.kubernetes.io/processor"]
+		if _, exists := desired[processorName]; exists {
+			continue
+		}
+
+		if err := deleteResourceIfExists(ctx, r.Client, service); err != nil {
+			return fmt.Errorf("failed to delete stale payment processor service %q: %w", service.Name, err)
+		}
+	}
+
+	return nil
+}
+
 // reconcileConfigMap reconciles the ConfigMap containing config.toml
 func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
@@ -825,6 +970,69 @@ func (r *CashuMintReconciler) ensureRolloutPrerequisites(ctx context.Context, ca
 		})
 	}
 
+	if cashuMint.Spec.Lightning.Backend == lightningBackendGRPCProcessor &&
+		cashuMint.Spec.Lightning.GRPCProcessor != nil &&
+		cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef != "" {
+		processor, exists := generators.FindPaymentProcessorByName(
+			cashuMint,
+			cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef,
+		)
+		if !exists {
+			return ctrl.Result{}, false, fmt.Errorf(
+				"referenced payment processor %q not found",
+				cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef,
+			)
+		}
+
+		processorName := generators.PaymentProcessorResourceName(cashuMint.Name, processor.Name)
+		processorDeployment := &appsv1.Deployment{}
+		if err := r.Get(ctx, client.ObjectKey{
+			Name:      processorName,
+			Namespace: cashuMint.Namespace,
+		}, processorDeployment); err != nil {
+			if apierrors.IsNotFound(err) {
+				readyMessage := fmt.Sprintf("Waiting for managed payment processor %q to be created", processor.Name)
+				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+					Type:               mintv1alpha1.ConditionTypeReady,
+					Status:             metav1.ConditionFalse,
+					ObservedGeneration: cashuMint.Generation,
+					Reason:             "DependenciesNotReady",
+					Message:            readyMessage,
+				})
+				meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+					Type:               mintv1alpha1.ConditionTypeLightningReady,
+					Status:             metav1.ConditionFalse,
+					ObservedGeneration: cashuMint.Generation,
+					Reason:             "DependenciesNotReady",
+					Message:            readyMessage,
+				})
+				r.emitEventf(cashuMint, corev1.EventTypeWarning, "PaymentProcessorNotReady", readyMessage)
+				return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, true, nil
+			}
+			return ctrl.Result{}, false, fmt.Errorf("failed to get payment processor deployment: %w", err)
+		}
+
+		if !isDeploymentReady(processorDeployment) {
+			readyMessage := fmt.Sprintf("Waiting for managed payment processor %q to be ready", processor.Name)
+			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+				Type:               mintv1alpha1.ConditionTypeReady,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: cashuMint.Generation,
+				Reason:             "DependenciesNotReady",
+				Message:            readyMessage,
+			})
+			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+				Type:               mintv1alpha1.ConditionTypeLightningReady,
+				Status:             metav1.ConditionFalse,
+				ObservedGeneration: cashuMint.Generation,
+				Reason:             "DependenciesNotReady",
+				Message:            readyMessage,
+			})
+			r.emitEventf(cashuMint, corev1.EventTypeWarning, "PaymentProcessorNotReady", readyMessage)
+			return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, true, nil
+		}
+	}
+
 	return ctrl.Result{}, false, nil
 }
 
@@ -905,7 +1113,7 @@ func collectSecretDependencies(cashuMint *mintv1alpha1.CashuMint) []secretDepend
 			addRequiredRef(cashuMint.Spec.Lightning.LNBits.AdminAPIKeySecretRef)
 			addRequiredRef(cashuMint.Spec.Lightning.LNBits.InvoiceAPIKeySecretRef)
 		}
-	case "grpcprocessor":
+	case lightningBackendGRPCProcessor:
 		if cashuMint.Spec.Lightning.GRPCProcessor != nil {
 			addOptionalRef(cashuMint.Spec.Lightning.GRPCProcessor.TLSSecretRef)
 		}
@@ -923,6 +1131,28 @@ func collectSecretDependencies(cashuMint *mintv1alpha1.CashuMint) []secretDepend
 	if cashuMint.Spec.Backup != nil && cashuMint.Spec.Backup.Enabled && cashuMint.Spec.Backup.S3 != nil {
 		addRequiredRef(cashuMint.Spec.Backup.S3.AccessKeyIDSecretRef)
 		addRequiredRef(cashuMint.Spec.Backup.S3.SecretAccessKeySecretRef)
+	}
+
+	if cashuMint.Spec.Lightning.Backend == lightningBackendGRPCProcessor &&
+		cashuMint.Spec.Lightning.GRPCProcessor != nil &&
+		cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef != "" {
+		for i := range cashuMint.Spec.PaymentProcessors {
+			processor := cashuMint.Spec.PaymentProcessors[i]
+			if processor.Name != cashuMint.Spec.Lightning.GRPCProcessor.ProcessorRef {
+				continue
+			}
+			for _, envVar := range processor.Env {
+				if envVar.ValueFrom == nil || envVar.ValueFrom.SecretKeyRef == nil {
+					continue
+				}
+				if envVar.ValueFrom.SecretKeyRef.Optional != nil && *envVar.ValueFrom.SecretKeyRef.Optional {
+					addOptionalRef(envVar.ValueFrom.SecretKeyRef)
+					continue
+				}
+				addRequiredRef(*envVar.ValueFrom.SecretKeyRef)
+			}
+			break
+		}
 	}
 
 	for _, imagePullSecret := range cashuMint.Spec.ImagePullSecrets {

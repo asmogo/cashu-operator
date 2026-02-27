@@ -57,6 +57,7 @@ spec:
 | `storage.size`            | string                                  | No       | `10Gi`                    | —                                              |
 | `storage.storageClassName`| string pointer                          | No       | —                         | —                                              |
 | `backup`                  | `BackupConfig`                          | No       | disabled                  | S3-compatible backup policy (schedule, retention, destination secrets) |
+| `paymentProcessors`       | []`PaymentProcessorSpec`                | No       | —                         | Optional operator-managed payment processor workloads |
 
 ### 2.2 Mint Information (`spec.mintInfo`)
 
@@ -159,10 +160,25 @@ spec:
 
 | Field          | Type                | Required | Default   | Validation                            |
 |----------------|---------------------|----------|-----------|---------------------------------------|
-| `address`      | string              | Yes      | —         | —                                     |
-| `port`         | int32               | Yes      | —         | 1 ≤ port ≤ 65535                      |
+| `processorRef` | string              | No       | —         | Must reference `spec.paymentProcessors[].name` |
+| `address`      | string              | Conditional | —      | Required when `processorRef` is not set |
+| `port`         | int32               | Conditional | —       | Required when `processorRef` is not set; 1 ≤ port ≤ 65535 |
 | `supportedUnits` | []string         | No       | `["sat"]` | —                                     |
 | `tlsSecretRef` | `SecretKeySelector` | No       | —         | Secret must provide client.crt/key/ca |
+
+#### PaymentProcessorSpec (`spec.paymentProcessors[]`)
+
+| Field             | Type                           | Required | Default         | Validation |
+|------------------|--------------------------------|----------|-----------------|------------|
+| `name`           | string                         | Yes      | —               | DNS label format, max 30 chars, unique per mint |
+| `image`          | string                         | Yes      | —               | —          |
+| `imagePullPolicy`| string (`Always`,`Never`,`IfNotPresent`) | No | `IfNotPresent` | Enum       |
+| `replicas`       | int32 pointer                  | No       | `1`             | Min=1      |
+| `port`           | int32                          | No       | `50051`         | 1 ≤ port ≤ 65535 |
+| `command`        | []string                       | No       | —               | —          |
+| `args`           | []string                       | No       | —               | —          |
+| `env`            | []`EnvVar`                     | No       | —               | Supports SecretKeyRef values |
+| `resources`      | `ResourceRequirements`         | No       | —               | —          |
 
 ### 2.5 Optional LDK Node (`spec.ldkNode`)
 
@@ -339,11 +355,17 @@ spec:
           requests:
             cpu: 500m
             memory: 1Gi
+  paymentProcessors:
+    - name: spark-primary
+      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
+      port: 50051
+    - name: spark-secondary
+      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
+      port: 50051
   lightning:
     backend: grpcprocessor
     grpcProcessor:
-      address: processor.cashu
-      port: 50051
+      processorRef: spark-primary
       supportedUnits: ["sat"]
       tlsSecretRef:
         name: grpc-client-cert

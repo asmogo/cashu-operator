@@ -99,6 +99,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	}
 
 	podSpec := corev1.PodSpec{
+		InitContainers:   generateInitContainers(mint),
 		Containers:       containers,
 		Volumes:          generateVolumes(mint),
 		ImagePullSecrets: mint.Spec.ImagePullSecrets,
@@ -109,6 +110,40 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	}
 
 	return podSpec
+}
+
+// generateInitContainers creates init containers that fix volume permissions.
+// The mintd image runs as root by default but the operator enforces RunAsUser=1000.
+// This init container ensures the /data volume is owned by the non-root user.
+func generateInitContainers(mint *mintv1alpha1.CashuMint) []corev1.Container {
+	sc := getPodSecurityContext(mint)
+	uid := int64(1000)
+	gid := int64(1000)
+	if sc.RunAsUser != nil {
+		uid = *sc.RunAsUser
+	}
+	if sc.FSGroup != nil {
+		gid = *sc.FSGroup
+	}
+
+	return []corev1.Container{
+		{
+			Name:    "fix-permissions",
+			Image:   "busybox:1.36",
+			Command: []string{"sh", "-c", fmt.Sprintf("chown -R %d:%d /data", uid, gid)},
+			VolumeMounts: []corev1.VolumeMount{
+				{
+					Name:      "data",
+					MountPath: "/data",
+				},
+			},
+			SecurityContext: &corev1.SecurityContext{
+				RunAsUser:    int64Ptr(0),
+				RunAsGroup:   int64Ptr(0),
+				RunAsNonRoot: boolPtr(false),
+			},
+		},
+	}
 }
 
 // generateMintContainer creates the main mint container
@@ -132,6 +167,7 @@ func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 		Name:            "mintd",
 		Image:           image,
 		ImagePullPolicy: imagePullPolicy,
+		Command:         []string{"cdk-mintd", "--config", "/etc/cdk-mintd/config.toml"},
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "api",
@@ -220,8 +256,12 @@ func generateLDKContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
 		{
+			Name:  "HOME",
+			Value: "/data",
+		},
+		{
 			Name:  "CASHU_CONFIG",
-			Value: "/root/.cdk-mintd/config.toml",
+			Value: "/etc/cdk-mintd/config.toml",
 		},
 		{
 			Name:  "CASHU_DATA_DIR",
@@ -361,8 +401,7 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
 		{
 			Name:      "config",
-			MountPath: "/root/.cdk-mintd/config.toml",
-			SubPath:   "config.toml",
+			MountPath: "/etc/cdk-mintd",
 			ReadOnly:  true,
 		},
 		{
