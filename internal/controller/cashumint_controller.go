@@ -411,7 +411,7 @@ func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint
 			return fmt.Errorf("failed to generate PostgreSQL secret: %w", err)
 		}
 		if secret != nil {
-			if err := r.Client.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+			if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
 				return fmt.Errorf("failed to create PostgreSQL secret: %w", err)
 			}
 			logger.Info("PostgreSQL secret created", "secret", secret.Name)
