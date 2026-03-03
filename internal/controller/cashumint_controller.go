@@ -406,7 +406,7 @@ func (r *CashuMintReconciler) reconcilePostgreSQL(ctx context.Context, cashuMint
 
 	if apierrors.IsNotFound(secretErr) {
 		// Secret does not exist yet — generate and create it.
-		secret, err := generators.GeneratePostgresSecret(cashuMint, r.Scheme, "")
+		secret, err := generators.GeneratePostgresSecret(cashuMint, "")
 		if err != nil {
 			return fmt.Errorf("failed to generate PostgreSQL secret: %w", err)
 		}
