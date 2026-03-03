@@ -3,7 +3,7 @@ kind: CashuMint
 metadata:
   name: cashumint-production
 spec:
-  image: ghcr.io/cashubtc/cdk-mintd:v0.10.0
+  image: ghcr.io/cashubtc/cdk-mintd:v0.15.0
   mintInfo:
     url: https://cashu.example.com
     name: "Example Cashu Mint"
@@ -26,6 +26,20 @@ spec:
           limits:
             cpu: 2
             memory: 4Gi
+  backup:
+    enabled: true
+    schedule: "0 */6 * * *"
+    retentionCount: 14
+    s3:
+      bucket: cashu-mint-backups
+      prefix: cashumint-production
+      region: us-east-1
+      accessKeyIdSecretRef:
+        name: cashumint-production-backup
+        key: AWS_ACCESS_KEY_ID
+      secretAccessKeySecretRef:
+        name: cashumint-production-backup
+        key: AWS_SECRET_ACCESS_KEY
   lightning:
     backend: grpcprocessor
     grpcProcessor:

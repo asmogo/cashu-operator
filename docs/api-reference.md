@@ -44,7 +44,7 @@ spec:
 
 | Field                      | Type                                    | Required | Default                   | Validation                                     |
 |---------------------------|-----------------------------------------|----------|---------------------------|------------------------------------------------|
-| `image`                   | string                                  | No       | `ghcr.io/cashubtc/cdk-mintd:latest` | —                                      |
+| `image`                   | string                                  | No       | `ghcr.io/cashubtc/cdk-mintd:v0.15.0` | —                                      |
 | `imagePullPolicy`         | string (`Always`, `Never`, `IfNotPresent`) | No    | `IfNotPresent`            | Enum                                          |
 | `imagePullSecrets`        | []`LocalObjectReference`                | No       | —                         | —                                              |
 | `replicas`                | int32                                   | No       | 1                         | Min=1, Max=1                                   |
@@ -56,6 +56,8 @@ spec:
 | `logging.format`          | string (`json`,`pretty`)                | No       | `json`                    | Enum                                           |
 | `storage.size`            | string                                  | No       | `10Gi`                    | —                                              |
 | `storage.storageClassName`| string pointer                          | No       | —                         | —                                              |
+| `backup`                  | `BackupConfig`                          | No       | disabled                  | S3-compatible backup policy (schedule, retention, destination secrets) |
+| `paymentProcessors`       | []`PaymentProcessorSpec`                | No       | —                         | Optional operator-managed payment processor workloads |
 
 ### 2.2 Mint Information (`spec.mintInfo`)
 
@@ -158,10 +160,25 @@ spec:
 
 | Field          | Type                | Required | Default   | Validation                            |
 |----------------|---------------------|----------|-----------|---------------------------------------|
-| `address`      | string              | Yes      | —         | —                                     |
-| `port`         | int32               | Yes      | —         | 1 ≤ port ≤ 65535                      |
+| `processorRef` | string              | No       | —         | Must reference `spec.paymentProcessors[].name` |
+| `address`      | string              | Conditional | —      | Required when `processorRef` is not set |
+| `port`         | int32               | Conditional | —       | Required when `processorRef` is not set; 1 ≤ port ≤ 65535 |
 | `supportedUnits` | []string         | No       | `["sat"]` | —                                     |
 | `tlsSecretRef` | `SecretKeySelector` | No       | —         | Secret must provide client.crt/key/ca |
+
+#### PaymentProcessorSpec (`spec.paymentProcessors[]`)
+
+| Field             | Type                           | Required | Default         | Validation |
+|------------------|--------------------------------|----------|-----------------|------------|
+| `name`           | string                         | Yes      | —               | DNS label format, max 30 chars, unique per mint |
+| `image`          | string                         | Yes      | —               | —          |
+| `imagePullPolicy`| string (`Always`,`Never`,`IfNotPresent`) | No | `IfNotPresent` | Enum       |
+| `replicas`       | int32 pointer                  | No       | `1`             | Min=1      |
+| `port`           | int32                          | No       | `50051`         | 1 ≤ port ≤ 65535 |
+| `command`        | []string                       | No       | —               | —          |
+| `args`           | []string                       | No       | —               | —          |
+| `env`            | []`EnvVar`                     | No       | —               | Supports SecretKeyRef values |
+| `resources`      | `ResourceRequirements`         | No       | —               | —          |
 
 ### 2.5 Optional LDK Node (`spec.ldkNode`)
 
@@ -242,6 +259,27 @@ spec:
 | `annotations`      | map[string]string   | No       | —             | —     |
 | `loadBalancerIP`   | string              | No       | —             | For LoadBalancer type only |
 
+### 2.11 Backup (`spec.backup`)
+
+| Field                              | Type                  | Required | Default       | Notes |
+|------------------------------------|-----------------------|----------|---------------|-------|
+| `enabled`                          | bool                  | Yes      | `false`       | Enables automated backups |
+| `schedule`                         | string                | Conditional | `0 */6 * * *` | Required when enabled |
+| `retentionCount`                   | int32 pointer         | No       | `14`          | Minimum 1 |
+| `s3`                               | `S3BackupConfig`      | Conditional | —          | Required when enabled |
+| `s3.bucket`                        | string                | Yes      | —             | Destination bucket |
+| `s3.prefix`                        | string                | No       | `<mint-name>` | Object key prefix |
+| `s3.region`                        | string                | No       | —             | Region or provider equivalent |
+| `s3.endpoint`                      | string                | No       | —             | Optional custom S3-compatible endpoint |
+| `s3.accessKeyIdSecretRef`          | `SecretKeySelector`   | Yes      | —             | Secret containing access key ID |
+| `s3.secretAccessKeySecretRef`      | `SecretKeySelector`   | Yes      | —             | Secret containing secret access key |
+
+Backups are currently reconciled for auto-provisioned PostgreSQL (`spec.database.postgres.autoProvision=true`).
+Restore job scaffolding is triggered with metadata annotations:
+
+- `mint.cashu.asmogo.github.io/restore-object-key`: required S3 object key to restore
+- `mint.cashu.asmogo.github.io/restore-request-id`: optional request identifier to force a new restore job name
+
 ---
 
 ## 3. Status Fields
@@ -259,8 +297,8 @@ spec:
 | `configMapName`      | string                  | Managed ConfigMap name                                   |
 | `readyReplicas`      | int32                   | Number of ready mint pods                                |
 | `url`                | string                  | Effective access URL (includes HTTPS scheme if TLS)      |
-| `databaseStatus`     | `DatabaseStatus`        | Database connectivity info (connected, message, timestamp) |
-| `lightningStatus`    | `LightningStatus`       | Lightning backend connectivity info                      |
+| `databaseStatus`     | `DatabaseStatus`        | Database readiness summary (`connected`, `message`, `lastChecked`) |
+| `lightningStatus`    | `LightningStatus`       | Lightning readiness summary (`connected`, `message`, `lastChecked`) |
 
 ### Status Conditions
 
@@ -269,10 +307,11 @@ Each condition is represented with `type`, `status`, `reason`, `message`, and `o
 | Condition Type        | Meaning                                                         |
 |-----------------------|-----------------------------------------------------------------|
 | `Ready`               | Mint deployment is ready to serve traffic                      |
-| `DatabaseReady`       | Database connection/provisioning succeeded                     |
-| `LightningReady`      | Lightning backend communication established                     |
+| `DatabaseReady`       | Database dependency gate passed (auto-provisioned Postgres ready or external DB config reconciled) |
+| `LightningReady`      | Lightning dependency gate passed after required dependencies are present |
 | `ConfigValid`         | Spec validated and rendered configuration applied               |
 | `IngressReady`        | Ingress and optional TLS are functional                         |
+| `BackupReady`         | Backup CronJob (and optional restore Job trigger) reconciled    |
 
 ---
 
@@ -282,6 +321,7 @@ Each condition is represented with `type`, `status`, `reason`, `message`, and `o
 - `database.postgres` must include either URL/URL secret or `autoProvision=true`.
 - `ingress.host` is required when ingress enabled; cert-manager issuer fields must be set when cert-manager is enabled.
 - Resource requests must not exceed limits.
+- Default `spec.image` is `ghcr.io/cashubtc/cdk-mintd:v0.15.0`; for PostgreSQL mints using `cdk-mintd:v0.15*`, admission warnings remind operators to take a verified backup before rollout.
 - Most optional numeric/string fields have server-side defaults (see sections above).
 
 ---
@@ -297,7 +337,7 @@ metadata:
   name: cashumint-prod
   namespace: cashu
 spec:
-  image: ghcr.io/cashubtc/cdk-mintd:v0.10.0
+  image: ghcr.io/cashubtc/cdk-mintd:v0.15.0
   mintInfo:
     url: https://mint.example.com
     mnemonicSecretRef:
@@ -315,11 +355,17 @@ spec:
           requests:
             cpu: 500m
             memory: 1Gi
+  paymentProcessors:
+    - name: spark-primary
+      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
+      port: 50051
+    - name: spark-secondary
+      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
+      port: 50051
   lightning:
     backend: grpcprocessor
     grpcProcessor:
-      address: processor.cashu
-      port: 50051
+      processorRef: spark-primary
       supportedUnits: ["sat"]
       tlsSecretRef:
         name: grpc-client-cert

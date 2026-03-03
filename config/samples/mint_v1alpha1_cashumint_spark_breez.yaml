@@ -1,0 +1,60 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-spark-breez
+spec:
+  image: cashubtc/mintd:0.15.0
+  mintInfo:
+    url: https://spark-breez-mint.example.com
+    name: "Spark Breez Cashu Mint"
+    description: "Cashu mint using Spark/Breez gRPC payment processor backend"
+    mnemonicSecretRef:
+      name: cashumint-spark-breez-mnemonic
+      key: mnemonic
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 20Gi
+        version: "16"
+  lightning:
+    backend: grpcprocessor
+    grpcProcessor:
+      supportedUnits:
+        - sat
+      sidecarProcessor:
+        enabled: true
+        image: asmogo/cdk-spark-payment-processor:sha-a02d7d8
+        workingDir: /data/spark-processor
+        env:
+          - name: BREEZ_API_KEY
+            valueFrom:
+              secretKeyRef:
+                name: cashumint-spark-breez-credentials
+                key: breez-api-key
+          - name: BREEZ_MNEMONIC
+            valueFrom:
+              secretKeyRef:
+                name: cashumint-spark-breez-mnemonic
+                key: mnemonic
+          - name: SERVER_ADDR
+            value: "0.0.0.0"
+          - name: SERVER_PORT
+            value: "50051"
+          - name: WORKING_DIR
+            value: "/data/spark-processor"
+  ingress:
+    enabled: true
+    host: spark.dev.ucash.space
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt
+        issuerKind: ClusterIssuer
+  service:
+    type: ClusterIP
+  logging:
+    level: info
+    format: json

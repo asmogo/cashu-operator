@@ -21,6 +21,22 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// Database engine values
+const (
+	DatabaseEnginePostgres = "postgres"
+	DatabaseEngineSQLite   = "sqlite"
+	DatabaseEngineRedb     = "redb"
+)
+
+// Lightning backend values
+const (
+	LightningBackendLND           = "lnd"
+	LightningBackendCLN           = "cln"
+	LightningBackendLNBits        = "lnbits"
+	LightningBackendFakeWallet    = "fakewallet"
+	LightningBackendGRPCProcessor = "grpcprocessor"
+)
+
 // CashuMint is the Schema for the cashumints API
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -117,6 +133,10 @@ type CashuMintSpec struct {
 	// Storage specifies persistent storage configuration
 	// +optional
 	Storage *StorageConfig `json:"storage,omitempty"`
+
+	// Backup specifies automated backup configuration
+	// +optional
+	Backup *BackupConfig `json:"backup,omitempty"`
 
 	// PodSecurityContext specifies the security context for the pod
 	// If not specified, defaults to RunAsNonRoot=true, RunAsUser=1000, FSGroup=1000
@@ -423,8 +443,8 @@ type FakeWalletConfig struct {
 
 // GRPCProcessorConfig specifies gRPC payment processor configuration
 type GRPCProcessorConfig struct {
-	// Address is the gRPC processor address
-	// For auto-deployed Spark processor, defaults to "localhost"
+	// Address is the gRPC processor address.
+	// When SidecarProcessor is enabled, this defaults to "localhost".
 	// +optional
 	Address string `json:"address,omitempty"`
 
@@ -439,25 +459,25 @@ type GRPCProcessorConfig struct {
 	// +kubebuilder:default={"sat"}
 	SupportedUnits []string `json:"supportedUnits,omitempty"`
 
-	// TLSSecretRef references a Secret containing TLS certificates
-	// If provided, the directory should contain client.crt, client.key, ca.crt
+	// TLSSecretRef references a Secret containing TLS certificates for the client connection.
+	// If provided, the secret should contain client.crt, client.key, ca.crt
 	// +optional
 	TLSSecretRef *corev1.SecretKeySelector `json:"tlsSecretRef,omitempty"`
 
-	// SparkPaymentProcessor enables automatic deployment of cdk-spark-payment-processor
-	// When enabled, the processor runs as a sidecar container
+	// SidecarProcessor enables automatic deployment of a gRPC payment processor
+	// as a sidecar container alongside the mint.
 	// +optional
-	SparkPaymentProcessor *SparkPaymentProcessorConfig `json:"sparkPaymentProcessor,omitempty"`
+	SidecarProcessor *SidecarProcessorConfig `json:"sidecarProcessor,omitempty"`
 }
 
-// SparkPaymentProcessorConfig specifies Spark payment processor configuration
-type SparkPaymentProcessorConfig struct {
-	// Enabled controls whether the Spark payment processor is deployed
+// SidecarProcessorConfig configures a generic gRPC payment processor sidecar container.
+// It can be used to run any gRPC processor (e.g. Spark, Stripe, custom) as a sidecar.
+type SidecarProcessorConfig struct {
+	// Enabled controls whether the sidecar processor is deployed
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled"`
 
-	// Image specifies the container image to use
-	// +kubebuilder:default="ghcr.io/thesimplekid/cdk-spark-payment-processor:latest"
+	// Image specifies the container image to use for the sidecar processor
 	// +optional
 	Image string `json:"image,omitempty"`
 
@@ -467,22 +487,19 @@ type SparkPaymentProcessorConfig struct {
 	// +optional
 	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 
-	// BreezAPIKeySecretRef references a Secret containing the Breez API key
-	// Required when enabled
+	// Command overrides the container entrypoint
 	// +optional
-	BreezAPIKeySecretRef *corev1.SecretKeySelector `json:"breezApiKeySecretRef,omitempty"`
+	Command []string `json:"command,omitempty"`
 
-	// MnemonicSecretRef references a Secret containing the BIP-39 mnemonic
-	// Required when enabled
+	// Args specifies additional container arguments
 	// +optional
-	MnemonicSecretRef *corev1.SecretKeySelector `json:"mnemonicSecretRef,omitempty"`
+	Args []string `json:"args,omitempty"`
 
-	// PassphraseSecretRef references a Secret containing the optional mnemonic passphrase
+	// Env specifies environment variables for the sidecar processor container
 	// +optional
-	PassphraseSecretRef *corev1.SecretKeySelector `json:"passphraseSecretRef,omitempty"`
+	Env []corev1.EnvVar `json:"env,omitempty"`
 
-	// WorkingDir is the working directory for all data
-	// +kubebuilder:default="/data/spark-processor"
+	// WorkingDir is the working directory for the processor's data
 	// +optional
 	WorkingDir string `json:"workingDir,omitempty"`
 
@@ -494,9 +511,8 @@ type SparkPaymentProcessorConfig struct {
 	// +optional
 	EnableTLS bool `json:"enableTLS,omitempty"`
 
-	// TLSSecretRef references a Secret containing TLS certificates
-	// Required when EnableTLS is true
-	// Should contain: server.crt, server.key
+	// TLSSecretRef references a Secret containing server TLS certificates
+	// Required when EnableTLS is true; should contain server.crt and server.key
 	// +optional
 	TLSSecretRef *corev1.SecretKeySelector `json:"tlsSecretRef,omitempty"`
 }
@@ -800,6 +816,51 @@ type StorageConfig struct {
 	StorageClassName *string `json:"storageClassName,omitempty"`
 }
 
+// BackupConfig specifies automated backup configuration
+type BackupConfig struct {
+	// Enabled controls whether automated backups are active
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Schedule is a cron expression used for backup execution
+	// +optional
+	Schedule string `json:"schedule,omitempty"`
+
+	// RetentionCount is the number of backups to retain
+	// +kubebuilder:default=14
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	RetentionCount *int32 `json:"retentionCount,omitempty"`
+
+	// S3 specifies S3-compatible object storage destination settings
+	// +optional
+	S3 *S3BackupConfig `json:"s3,omitempty"`
+}
+
+// S3BackupConfig specifies S3-compatible object storage backup settings
+type S3BackupConfig struct {
+	// Bucket is the destination bucket name
+	Bucket string `json:"bucket"`
+
+	// Prefix is an optional object key prefix
+	// +optional
+	Prefix string `json:"prefix,omitempty"`
+
+	// Region is an optional object storage region
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// Endpoint is an optional custom endpoint for S3-compatible providers
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// AccessKeyIDSecretRef references a secret key containing object storage access key ID
+	AccessKeyIDSecretRef corev1.SecretKeySelector `json:"accessKeyIdSecretRef"`
+
+	// SecretAccessKeySecretRef references a secret key containing object storage secret access key
+	SecretAccessKeySecretRef corev1.SecretKeySelector `json:"secretAccessKeySecretRef"`
+}
+
 // CashuMintStatus defines the observed state of CashuMint
 type CashuMintStatus struct {
 	// Phase represents the current phase of the mint
@@ -905,6 +966,9 @@ const (
 
 	// ConditionTypeIngressReady indicates the ingress is ready
 	ConditionTypeIngressReady = "IngressReady"
+
+	// ConditionTypeBackupReady indicates backup resources are reconciled
+	ConditionTypeBackupReady = "BackupReady"
 )
 
 // CashuMintList contains a list of CashuMint

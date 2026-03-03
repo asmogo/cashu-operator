@@ -31,14 +31,35 @@ import (
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 )
 
+// initPasswordScript is the shell script for the init-password container.
+// It ensures the PostgreSQL password matches the Secret when the database
+// has already been initialized (e.g. after CR delete/recreate where the PVC
+// survives but the Secret was regenerated).
+const initPasswordScript = `set -e
+if [ -f /var/lib/postgresql/data/pgdata/PG_VERSION ]; then
+  echo "Database already initialized, ensuring password is correct..."
+  chown -R 999:999 /var/lib/postgresql/data/pgdata
+  chmod 0700 /var/lib/postgresql/data/pgdata
+  su-exec 999:999 pg_ctl -D /var/lib/postgresql/data/pgdata -o "-c listen_addresses='' -c local_preload_libraries=''" -w start
+  su-exec 999:999 psql -U ` + postgresUser + ` -d ` + postgresDatabase + ` -c "ALTER USER ` + postgresUser + ` WITH PASSWORD '${POSTGRES_PASSWORD}';"
+  su-exec 999:999 pg_ctl -D /var/lib/postgresql/data/pgdata -w stop
+  echo "Password updated successfully"
+else
+  echo "Database not yet initialized, skipping password update"
+fi`
+
 const (
 	postgresUser     = "cdk"
 	postgresDatabase = "cdk_mintd"
 )
 
-// GeneratePostgresSecret creates a Secret for PostgreSQL credentials
-// existingPassword should be provided if the secret already exists to avoid regenerating the password
-func GeneratePostgresSecret(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme, existingPassword string) (*corev1.Secret, error) {
+// GeneratePostgresSecret creates a Secret for PostgreSQL credentials.
+// The Secret is intentionally created WITHOUT an owner reference so that it
+// survives CR deletion (matching the StatefulSet PVC lifecycle). This prevents
+// password mismatch when a CashuMint is deleted and recreated while the PVC
+// still contains data initialized with the original password.
+// existingPassword should be provided if the secret already exists to avoid regenerating the password.
+func GeneratePostgresSecret(mint *mintv1alpha1.CashuMint, existingPassword string) (*corev1.Secret, error) {
 	if mint.Spec.Database.Postgres == nil || !mint.Spec.Database.Postgres.AutoProvision {
 		return nil, nil
 	}
@@ -80,10 +101,6 @@ func GeneratePostgresSecret(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme
 			"password":     password,
 			"database-url": dbURL,
 		},
-	}
-
-	if err := controllerutil.SetControllerReference(mint, secret, scheme); err != nil {
-		return nil, fmt.Errorf("failed to set controller reference: %w", err)
 	}
 
 	return secret, nil
@@ -193,30 +210,7 @@ func GeneratePostgresStatefulSet(mint *mintv1alpha1.CashuMint, scheme *runtime.S
 							Command: []string{
 								"sh",
 								"-c",
-								// This script ensures the password in postgres matches the secret
-								// It only runs if postgres is already initialized
-								`if [ -f /var/lib/postgresql/data/pgdata/PG_VERSION ]; then
-  echo "Database already initialized, ensuring password is correct..."
-  # Start postgres temporarily in the background
-  su-exec postgres postgres -D /var/lib/postgresql/data/pgdata &
-  PG_PID=$!
-  # Wait for postgres to be ready
-  for i in $(seq 1 30); do
-    if pg_isready -U ` + postgresUser + ` -d ` + postgresDatabase + ` > /dev/null 2>&1; then
-      echo "Postgres is ready"
-      break
-    fi
-    sleep 1
-  done
-  # Update the password
-  psql -U ` + postgresUser + ` -d ` + postgresDatabase + ` -c "ALTER USER ` + postgresUser + ` WITH PASSWORD '${POSTGRES_PASSWORD}';" || true
-  # Stop postgres
-  kill $PG_PID
-  wait $PG_PID
-  echo "Password updated successfully"
-else
-  echo "Database not yet initialized, skipping password update"
-fi`,
+								initPasswordScript,
 							},
 							Env: []corev1.EnvVar{
 								{

@@ -91,12 +91,12 @@ func GenerateDeployment(mint *mintv1alpha1.CashuMint, configHash string, scheme 
 func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	containers := []corev1.Container{}
 
-	// Add Spark payment processor sidecar if enabled
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	// Add generic gRPC processor sidecar if enabled
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.Enabled {
-		containers = append(containers, generateSparkProcessorContainer(mint))
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled {
+		containers = append(containers, generateSidecarProcessorContainer(mint))
 	}
 
 	// Add LDK node sidecar if enabled
@@ -121,7 +121,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	image := mint.Spec.Image
 	if image == "" {
-		image = "cashubtc/mintd:latest"
+		image = "ghcr.io/cashubtc/cdk-mintd:latest"
 	}
 
 	imagePullPolicy := mint.Spec.ImagePullPolicy
@@ -222,17 +222,12 @@ func generateLDKContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	}
 }
 
-// generateSparkProcessorContainer creates the Spark payment processor sidecar container
-func generateSparkProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
-	sparkConfig := mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor
+// generateSidecarProcessorContainer creates a generic gRPC payment processor sidecar container.
+// It supports any processor image configured via spec.lightning.grpcProcessor.sidecarProcessor.
+func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
+	sidecarConfig := mint.Spec.Lightning.GRPCProcessor.SidecarProcessor
 
-	// Set defaults
-	image := sparkConfig.Image
-	if image == "" {
-		image = "asmogo/cdk-stripe-payment-processo:latest"
-	}
-
-	imagePullPolicy := sparkConfig.ImagePullPolicy
+	imagePullPolicy := sidecarConfig.ImagePullPolicy
 	if imagePullPolicy == "" {
 		imagePullPolicy = corev1.PullIfNotPresent
 	}
@@ -242,117 +237,32 @@ func generateSparkProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Contai
 		port = 50051
 	}
 
-	workingDir := sparkConfig.WorkingDir
-	if workingDir == "" {
-		workingDir = "/data/spark-processor"
-	}
-
-	// Build environment variables
-	envVars := []corev1.EnvVar{
-		{
-			Name:  "SERVER_ADDR",
-			Value: "0.0.0.0",
-		},
-		{
-			Name:  "SERVER_PORT",
-			Value: fmt.Sprintf("%d", port),
-		},
-		{
-			Name:  "WORKING_DIR",
-			Value: workingDir,
-		},
-		{
-			Name:  "RUST_LOG",
-			Value: "info",
-		},
-	}
-
-	// Add Breez API key from secret
-	if sparkConfig.BreezAPIKeySecretRef != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "BREEZ_API_KEY",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: sparkConfig.BreezAPIKeySecretRef.Name,
-					},
-					Key: sparkConfig.BreezAPIKeySecretRef.Key,
-				},
-			},
-		})
-	}
-
-	// Add mnemonic from secret
-	if sparkConfig.MnemonicSecretRef != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "BREEZ_MNEMONIC",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: sparkConfig.MnemonicSecretRef.Name,
-					},
-					Key: sparkConfig.MnemonicSecretRef.Key,
-				},
-			},
-		})
-	}
-
-	// Add optional passphrase from secret
-	if sparkConfig.PassphraseSecretRef != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "BREEZ_PASSPHRASE",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: sparkConfig.PassphraseSecretRef.Name,
-					},
-					Key: sparkConfig.PassphraseSecretRef.Key,
-				},
-			},
-		})
-	}
-
-	// Add TLS configuration if enabled
-	if sparkConfig.EnableTLS {
-		envVars = append(envVars, corev1.EnvVar{
-			Name:  "TLS_ENABLE",
-			Value: "true",
-		})
-		if sparkConfig.TLSSecretRef != nil {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "TLS_CERT_PATH",
-				Value: "/secrets/spark-tls/server.crt",
-			})
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "TLS_KEY_PATH",
-				Value: "/secrets/spark-tls/server.key",
-			})
-		}
-	}
-
-	// Build volume mounts
-	volumeMounts := []corev1.VolumeMount{
-		{
+	// Build volume mounts - shared data volume and optional TLS
+	volumeMounts := []corev1.VolumeMount{}
+	if sidecarConfig.WorkingDir != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "data",
-			MountPath: workingDir,
-			SubPath:   "spark-processor",
-		},
+			MountPath: sidecarConfig.WorkingDir,
+			SubPath:   "sidecar-processor",
+		})
 	}
 
 	// Add TLS secret volume mount if needed
-	if sparkConfig.EnableTLS && sparkConfig.TLSSecretRef != nil {
+	if sidecarConfig.EnableTLS && sidecarConfig.TLSSecretRef != nil {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
-			Name:      "spark-tls",
-			MountPath: "/secrets/spark-tls",
+			Name:      "sidecar-tls",
+			MountPath: "/secrets/sidecar-tls",
 			ReadOnly:  true,
 		})
 	}
 
-	// Build container
+	// Build container - the user provides all env vars, command, and args
 	container := corev1.Container{
-		Name:            "spark-processor",
-		Image:           image,
+		Name:            "grpc-processor",
+		Image:           sidecarConfig.Image,
 		ImagePullPolicy: imagePullPolicy,
+		Command:         sidecarConfig.Command,
+		Args:            sidecarConfig.Args,
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "grpc",
@@ -360,17 +270,16 @@ func generateSparkProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Contai
 				Protocol:      corev1.ProtocolTCP,
 			},
 		},
-		Env:          envVars,
+		Env:          sidecarConfig.Env,
 		VolumeMounts: volumeMounts,
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: boolPtr(false),
-			RunAsNonRoot:             boolPtr(false),
 		},
 	}
 
 	// Add resource requirements if specified
-	if sparkConfig.Resources != nil {
-		container.Resources = *sparkConfig.Resources
+	if sidecarConfig.Resources != nil {
+		container.Resources = *sidecarConfig.Resources
 	}
 
 	return container
@@ -380,11 +289,15 @@ func generateSparkProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Contai
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	envVars := []corev1.EnvVar{
 		{
-			Name:  "CASHU_CONFIG",
-			Value: "/root/.cdk-mintd/config.toml",
+			// CDK_MINTD_WORK_DIR tells cdk-mintd where its work directory is.
+			// The binary looks for config.toml at $CDK_MINTD_WORK_DIR/config.toml,
+			// and stores SQLite DB, logs, and TLS material under this path.
+			// We mount config.toml into /data/config.toml and use /data as work dir.
+			Name:  "CDK_MINTD_WORK_DIR",
+			Value: "/data",
 		},
 		{
-			Name:  "CASHU_DATA_DIR",
+			Name:  "HOME",
 			Value: "/data",
 		},
 	}
@@ -420,9 +333,9 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	}
 
 	// Database configuration
-	// Note: For auto-provisioned postgres, the URL with password is now in the config file
-	// For external postgres with URLSecretRef, we still use environment variables
-	if mint.Spec.Database.Engine == "postgres" && mint.Spec.Database.Postgres != nil {
+	// Note: For auto-provisioned postgres, the URL with password is written directly into the config file.
+	// For external postgres with URLSecretRef, we still inject via environment variable.
+	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres && mint.Spec.Database.Postgres != nil {
 		if mint.Spec.Database.Postgres.URLSecretRef != nil {
 			envVars = append(envVars, corev1.EnvVar{
 				Name: "CDK_MINTD_DATABASE_URL",
@@ -437,7 +350,6 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 				Value: mint.Spec.Database.Postgres.URL,
 			})
 		}
-		// For auto-provisioned postgres, the URL is now directly in the config file
 	}
 
 	// Auth database configuration
@@ -454,7 +366,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	}
 
 	// LNBits API keys from secrets
-	if mint.Spec.Lightning.Backend == "lnbits" && mint.Spec.Lightning.LNBits != nil {
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLNBits && mint.Spec.Lightning.LNBits != nil {
 		envVars = append(envVars, corev1.EnvVar{
 			Name: "LNBITS_ADMIN_API_KEY",
 			ValueFrom: &corev1.EnvVarSource{
@@ -511,8 +423,9 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	mounts := []corev1.VolumeMount{
 		{
+			// Mount config.toml into the work dir so CDK finds it at $CDK_MINTD_WORK_DIR/config.toml
 			Name:      "config",
-			MountPath: "/root/.cdk-mintd/config.toml",
+			MountPath: "/data/config.toml",
 			SubPath:   "config.toml",
 			ReadOnly:  true,
 		},
@@ -523,7 +436,7 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	}
 
 	// LND macaroon and cert
-	if mint.Spec.Lightning.Backend == "lnd" && mint.Spec.Lightning.LND != nil {
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLND && mint.Spec.Lightning.LND != nil {
 		if mint.Spec.Lightning.LND.MacaroonSecretRef != nil {
 			mounts = append(mounts, corev1.VolumeMount{
 				Name:      "lnd-macaroon",
@@ -543,7 +456,7 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 	}
 
 	// gRPC processor TLS certificates
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
 		mounts = append(mounts, corev1.VolumeMount{
@@ -572,7 +485,7 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// Data volume - either PVC or emptyDir
-	if mint.Spec.Database.Engine == "sqlite" || mint.Spec.Database.Engine == "redb" {
+	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineSQLite || mint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineRedb {
 		// Use PVC for SQLite/redb
 		volumes = append(volumes, corev1.Volume{
 			Name: "data",
@@ -593,7 +506,7 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// LND secret volumes
-	if mint.Spec.Lightning.Backend == "lnd" && mint.Spec.Lightning.LND != nil {
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLND && mint.Spec.Lightning.LND != nil {
 		if mint.Spec.Lightning.LND.MacaroonSecretRef != nil {
 			volumes = append(volumes, corev1.Volume{
 				Name: "lnd-macaroon",
@@ -617,7 +530,7 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// gRPC processor TLS volume
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
 		mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
 		volumes = append(volumes, corev1.Volume{
@@ -630,18 +543,18 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 		})
 	}
 
-	// Spark payment processor TLS volume
-	if mint.Spec.Lightning.Backend == "grpcprocessor" &&
+	// Sidecar processor TLS volume
+	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
 		mint.Spec.Lightning.GRPCProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.Enabled &&
-		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.EnableTLS &&
-		mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.TLSSecretRef != nil {
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.EnableTLS &&
+		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.TLSSecretRef != nil {
 		volumes = append(volumes, corev1.Volume{
-			Name: "spark-tls",
+			Name: "sidecar-tls",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: mint.Spec.Lightning.GRPCProcessor.SparkPaymentProcessor.TLSSecretRef.Name,
+					SecretName: mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.TLSSecretRef.Name,
 				},
 			},
 		})
