@@ -22,6 +22,9 @@ go.work
 # Local checkouts that landed in the repo root
 cdk-spark-payment-prcoessor/
 
+# Generated installer bundle
+dist/
+
 # editor and IDE paraphernalia
 .idea
 .vscode
