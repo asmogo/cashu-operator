@@ -26,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -35,6 +36,15 @@ import (
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 	"github.com/asmogo/cashu-operator/internal/controller/generators"
 )
+
+// fakeRecorder is a simple event recorder for tests
+type fakeRecorder struct{}
+
+func (f *fakeRecorder) Event(object runtime.Object, eventtype, reason, message string) {}
+func (f *fakeRecorder) Eventf(object runtime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+}
+func (f *fakeRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
+}
 
 var _ = Describe("CashuMint Controller", func() {
 	Context("When reconciling a resource", func() {
@@ -88,8 +98,9 @@ var _ = Describe("CashuMint Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Recorder: &fakeRecorder{},
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
@@ -153,8 +164,9 @@ var _ = Describe("CashuMint Controller", func() {
 
 		It("should reconcile without blocking when Secrets are missing (Kubernetes handles missing secrets at runtime)", func() {
 			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
 			}
 
 			var result reconcile.Result
@@ -225,8 +237,9 @@ var _ = Describe("CashuMint Controller", func() {
 
 		It("should provision PostgreSQL and proceed with deployment (no longer gates on postgres readiness)", func() {
 			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
 			}
 
 			var result reconcile.Result
@@ -352,8 +365,9 @@ var _ = Describe("CashuMint Controller", func() {
 
 		It("should reconcile backup and restore resources with backup status condition", func() {
 			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
 			}
 
 			for i := 0; i < 4; i++ {
@@ -465,8 +479,9 @@ var _ = Describe("CashuMint Controller", func() {
 
 		It("should set deployment database URL from SecretKeyRef", func() {
 			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
 			}
 
 			for i := 0; i < 3; i++ {
@@ -572,8 +587,9 @@ var _ = Describe("CashuMint Controller", func() {
 
 		It("should reconcile without blocking when a Secret key is missing (Kubernetes handles this at pod start)", func() {
 			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
 			}
 
 			var result reconcile.Result
@@ -711,8 +727,9 @@ var _ = Describe("CashuMint Controller", func() {
 
 		It("should set backup status to not reconciled without creating cronjob", func() {
 			controllerReconciler := &CashuMintReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
 			}
 
 			for i := 0; i < 3; i++ {

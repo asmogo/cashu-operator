@@ -1877,6 +1877,10 @@ spec:
                     default: 0.0.0.0
                     description: Host is the LDK node listening host
                     type: string
+                  image:
+                    default: ghcr.io/cashubtc/ldk-node:latest
+                    description: Image specifies the LDK node container image to use
+                    type: string
                   port:
                     default: 8090
                     description: Port is the LDK node listening port

@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -52,7 +53,8 @@ const (
 // CashuMintReconciler reconciles a CashuMint object
 type CashuMintReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Scheme   *runtime.Scheme
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=mint.cashu.asmogo.github.io,resources=cashumints,verbs=get;list;watch;create;update;patch;delete
@@ -111,6 +113,7 @@ func (r *CashuMintReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			logger.Error(err, "Failed to update status to Pending")
 			return ctrl.Result{}, err
 		}
+		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Created", "CashuMint resource created")
 		return ctrl.Result{Requeue: true}, nil
 	}
 
@@ -137,7 +140,32 @@ func (r *CashuMintReconciler) handleDeletion(ctx context.Context, cashuMint *min
 		// Perform cleanup logic here
 		logger.Info("Performing cleanup for CashuMint", "name", cashuMint.Name)
 
-		// TODO: Add cleanup logic (e.g., external database cleanup, notifications)
+		// Cleanup auto-provisioned PostgreSQL secret if it exists
+		// Note: The StatefulSet, Service, and PVC are automatically cleaned up via owner references,
+		// but the Secret was intentionally created without an owner reference to preserve the password
+		// across recreations. We explicitly delete it during finalization.
+		if cashuMint.Spec.Database.Postgres != nil && cashuMint.Spec.Database.Postgres.AutoProvision {
+			secretName := cashuMint.Name + "-postgres-secret"
+			secret := &corev1.Secret{}
+			err := r.Get(ctx, client.ObjectKey{
+				Namespace: cashuMint.Namespace,
+				Name:      secretName,
+			}, secret)
+			if err == nil {
+				logger.Info("Deleting auto-provisioned PostgreSQL secret", "secret", secretName)
+				if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
+					logger.Error(err, "Failed to delete PostgreSQL secret", "secret", secretName)
+					r.Recorder.Event(cashuMint, corev1.EventTypeWarning, "CleanupFailed", fmt.Sprintf("Failed to delete PostgreSQL secret: %v", err))
+					return ctrl.Result{}, err
+				}
+				r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "SecretDeleted", "Auto-provisioned PostgreSQL secret deleted")
+			} else if !apierrors.IsNotFound(err) {
+				logger.Error(err, "Failed to get PostgreSQL secret for cleanup", "secret", secretName)
+				return ctrl.Result{}, err
+			}
+		}
+
+		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Deleted", "CashuMint cleanup completed")
 
 		// Remove finalizer
 		controllerutil.RemoveFinalizer(cashuMint, cashuMintFinalizer)
@@ -145,6 +173,7 @@ func (r *CashuMintReconciler) handleDeletion(ctx context.Context, cashuMint *min
 			logger.Error(err, "Failed to remove finalizer")
 			return ctrl.Result{}, err
 		}
+		logger.Info("Cleanup completed for CashuMint", "name", cashuMint.Name)
 	}
 
 	return ctrl.Result{}, nil
@@ -164,6 +193,7 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 			Reason:             "Provisioning",
 			Message:            "Starting resource provisioning",
 		})
+		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Provisioning", "Starting resource provisioning")
 	}
 
 	// Check if spec has changed (generation mismatch)
@@ -177,12 +207,14 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 			Reason:             "Updating",
 			Message:            "Updating resources due to spec change",
 		})
+		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Updating", "Spec changed, updating resources")
 	}
 
 	// Phase 1: Reconcile PostgreSQL auto-provisioning (if needed)
 	if cashuMint.Spec.Database.Postgres != nil && cashuMint.Spec.Database.Postgres.AutoProvision {
 		logger.Info("Reconciling auto-provisioned PostgreSQL")
 		if err := r.reconcilePostgreSQL(ctx, cashuMint); err != nil {
+			r.Recorder.Event(cashuMint, corev1.EventTypeWarning, "PostgreSQLFailed", fmt.Sprintf("Failed to reconcile PostgreSQL: %v", err))
 			return ctrl.Result{}, fmt.Errorf("failed to reconcile PostgreSQL: %w", err)
 		}
 	}
@@ -209,26 +241,26 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		}
 	}
 
-	// Phase 4: Reconcile Deployment
+	// Phase 5: Reconcile Deployment
 	logger.Info("Reconciling Deployment")
 	if err := r.reconcileDeployment(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile Deployment: %w", err)
 	}
 
-	// Phase 5: Reconcile Service
+	// Phase 6: Reconcile Service
 	logger.Info("Reconciling Service")
 	if err := r.reconcileService(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile Service: %w", err)
 	}
 
-	// Phase 6: Reconcile Ingress (if enabled)
+	// Phase 7: Reconcile Ingress (if enabled)
 	if cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled {
 		logger.Info("Reconciling Ingress")
 		if err := r.reconcileIngress(ctx, cashuMint); err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to reconcile Ingress: %w", err)
 		}
 
-		// Phase 7: Reconcile Certificate (if cert-manager is enabled)
+		// Phase 8: Reconcile Certificate (if cert-manager is enabled)
 		if cashuMint.Spec.Ingress.TLS != nil && cashuMint.Spec.Ingress.TLS.Enabled &&
 			cashuMint.Spec.Ingress.TLS.CertManager != nil && cashuMint.Spec.Ingress.TLS.CertManager.Enabled {
 			logger.Info("Reconciling Certificate")
@@ -242,6 +274,10 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}, deployment); err == nil {
 		if isDeploymentReady(deployment) {
+			// Only emit event if transitioning to Ready state
+			if cashuMint.Status.Phase != mintv1alpha1.MintPhaseReady {
+				r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Ready", "CashuMint is ready and operational")
+			}
 			cashuMint.Status.Phase = mintv1alpha1.MintPhaseReady
 			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
 				Type:               mintv1alpha1.ConditionTypeReady,
@@ -283,6 +319,7 @@ func (r *CashuMintReconciler) handleError(ctx context.Context, cashuMint *mintv1
 	if apierrors.IsNotFound(err) {
 		// Dependency not found: fast retry
 		logger.Info("Dependency not found, retrying after delay")
+		r.Recorder.Event(cashuMint, corev1.EventTypeWarning, "DependencyNotFound", "Waiting for dependencies to be created")
 		return ctrl.Result{RequeueAfter: NotReadyRetryInterval}, nil
 	}
 
@@ -295,6 +332,8 @@ func (r *CashuMintReconciler) handleError(ctx context.Context, cashuMint *mintv1
 		Reason:             "ReconciliationFailed",
 		Message:            err.Error(),
 	})
+
+	r.Recorder.Event(cashuMint, corev1.EventTypeWarning, "ReconciliationFailed", err.Error())
 
 	if updateErr := r.Status().Update(ctx, cashuMint); updateErr != nil {
 		logger.Error(updateErr, "Failed to update status after error")

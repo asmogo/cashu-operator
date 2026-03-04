@@ -180,8 +180,9 @@ func setupManager(config *ServerConfig, tlsOpts []func(*tls.Config)) (ctrl.Manag
 
 func setupControllers(mgr ctrl.Manager) error {
 	if err := (&controller.CashuMintReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("cashumint-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("unable to create CashuMint controller: %w", err)
 	}

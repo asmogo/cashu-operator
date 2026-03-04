@@ -5,14 +5,14 @@ metadata:
 spec:
   image: ghcr.io/cashubtc/cdk-mintd:v0.15.0
   podSecurityContext:
-    runAsUser: 0
-    fsGroup: 0
-    runAsNonRoot: false
+    runAsUser: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
 
   # Override container security context
   containerSecurityContext:
     allowPrivilegeEscalation: false
-    runAsNonRoot: false
+    runAsNonRoot: true
     capabilities:
       drop:
         - ALL
