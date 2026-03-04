@@ -523,6 +523,11 @@ type LDKNodeConfig struct {
 	// +kubebuilder:default=false
 	Enabled bool `json:"enabled"`
 
+	// Image specifies the LDK node container image to use
+	// +kubebuilder:default="ghcr.io/cashubtc/ldk-node:latest"
+	// +optional
+	Image string `json:"image,omitempty"`
+
 	// FeePercent is the fee percentage
 	// +kubebuilder:default=0.04
 	// +optional

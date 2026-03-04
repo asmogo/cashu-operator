@@ -194,9 +194,14 @@ func generateLDKContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 		webserverPort = 8888
 	}
 
+	image := mint.Spec.LDKNode.Image
+	if image == "" {
+		image = "ghcr.io/cashubtc/ldk-node:latest"
+	}
+
 	return corev1.Container{
 		Name:  "ldk-node",
-		Image: "ghcr.io/cashubtc/ldk-node:latest", // TODO: Make this configurable
+		Image: image,
 		Ports: []corev1.ContainerPort{
 			{
 				Name:          "ldk",

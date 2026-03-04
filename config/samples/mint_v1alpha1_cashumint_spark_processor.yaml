@@ -131,13 +131,13 @@ spec:
 
   # Security contexts
   podSecurityContext:
-    runAsNonRoot: false
-    runAsUser: 0
-    fsGroup: 0
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroup: 1000
 
   containerSecurityContext:
     allowPrivilegeEscalation: false
-    runAsNonRoot: false
+    runAsNonRoot: true
     capabilities:
       drop:
         - ALL
