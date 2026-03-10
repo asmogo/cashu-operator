@@ -60,7 +60,7 @@ spec:
       bucket: my-cashu-backups
       prefix: backups # objects land at backups/<name>-<ts>.sql.gz
       region: us-east-1
-      endpoint: https://docker-test.fra1.digitaloceanspaces.com
+      endpoint: https://s3.us-east-005.backblazeb2.com
       # For S3-compatible providers (MinIO, Backblaze, etc.) set endpoint:
       # endpoint: https://s3.us-east-005.backblazeb2.com
       accessKeyIdSecretRef:
