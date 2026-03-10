@@ -26,7 +26,6 @@ spec:
   storage:
     size: 5Gi
   paymentBackend:
-    backend: fakewallet
     fakeWallet:
       supportedUnits:
         - sat

@@ -19,7 +19,6 @@ spec:
         storageSize: 20Gi
         version: "16"
   paymentBackend:
-    backend: grpcprocessor
     grpcProcessor:
       supportedUnits:
         - usd

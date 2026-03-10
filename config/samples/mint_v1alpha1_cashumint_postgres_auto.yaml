@@ -34,7 +34,6 @@ spec:
             cpu: 100m
             memory: 128Mi
   paymentBackend:
-    backend: fakewallet
     fakeWallet:
       supportedUnits:
         - sat

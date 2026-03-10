@@ -18,7 +18,6 @@ spec:
       maxConnections: 30
       connectionTimeoutSeconds: 15
   paymentBackend:
-    backend: fakewallet
     fakeWallet:
       supportedUnits:
         - sat

@@ -41,7 +41,6 @@ spec:
         name: cashumint-production-backup
         key: AWS_SECRET_ACCESS_KEY
   paymentBackend:
-    backend: grpcprocessor
     grpcProcessor:
       address: grpc-processor.cashu.svc.cluster.local
       port: 50051
