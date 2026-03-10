@@ -33,7 +33,7 @@ spec:
           requests:
             cpu: 100m
             memory: 128Mi
-  lightning:
+  paymentBackend:
     backend: fakewallet
     fakeWallet:
       supportedUnits:

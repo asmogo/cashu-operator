@@ -40,7 +40,7 @@ spec:
       secretAccessKeySecretRef:
         name: cashumint-production-backup
         key: AWS_SECRET_ACCESS_KEY
-  lightning:
+  paymentBackend:
     backend: grpcprocessor
     grpcProcessor:
       address: grpc-processor.cashu.svc.cluster.local

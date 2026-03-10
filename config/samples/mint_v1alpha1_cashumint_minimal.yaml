@@ -25,7 +25,7 @@ spec:
       dataDir: /data
   storage:
     size: 5Gi
-  lightning:
+  paymentBackend:
     backend: fakewallet
     fakeWallet:
       supportedUnits:

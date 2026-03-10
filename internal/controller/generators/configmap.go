@@ -71,10 +71,12 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) string 
 	writeInfoSection(&buf, mint)
 	writeMintInfoSection(&buf, mint)
 	writeDatabaseSection(&buf, mint, dbPassword)
-	writeLnSection(&buf, mint)
+	writePaymentBackendSection(&buf, mint)
 	writeLDKNodeSection(&buf, mint)
 	writeAuthSection(&buf, mint)
 	writeManagementRPCSection(&buf, mint)
+	writeLimitsSection(&buf, mint)
+	writePrometheusSection(&buf, mint)
 	return buf.String()
 }
 
@@ -94,6 +96,21 @@ func writeInfoSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	}
 	fmt.Fprintf(buf, "listen_port = %d\n", listenPort)
 
+	if mint.Spec.MintInfo.UseKeysetV2 != nil {
+		fmt.Fprintf(buf, "use_keyset_v2 = %t\n", *mint.Spec.MintInfo.UseKeysetV2)
+	}
+
+	// [info.quote_ttl] — nested under [info]
+	if mint.Spec.MintInfo.QuoteTTL != nil {
+		buf.WriteString("\n[info.quote_ttl]\n")
+		if mint.Spec.MintInfo.QuoteTTL.MintTTL != nil {
+			fmt.Fprintf(buf, "mint_ttl = %d\n", *mint.Spec.MintInfo.QuoteTTL.MintTTL)
+		}
+		if mint.Spec.MintInfo.QuoteTTL.MeltTTL != nil {
+			fmt.Fprintf(buf, "melt_ttl = %d\n", *mint.Spec.MintInfo.QuoteTTL.MeltTTL)
+		}
+	}
+
 	// [info.http_cache] — nested under [info]
 	if mint.Spec.HTTPCache != nil {
 		backend := mint.Spec.HTTPCache.Backend
@@ -108,9 +125,13 @@ func writeInfoSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 		if mint.Spec.HTTPCache.TTI != nil {
 			fmt.Fprintf(buf, "tti = %d\n", *mint.Spec.HTTPCache.TTI)
 		}
-		if mint.Spec.HTTPCache.Backend == "redis" && mint.Spec.HTTPCache.Redis != nil &&
-			mint.Spec.HTTPCache.Redis.KeyPrefix != "" {
-			fmt.Fprintf(buf, "key_prefix = %q\n", mint.Spec.HTTPCache.Redis.KeyPrefix)
+		if mint.Spec.HTTPCache.Backend == "redis" && mint.Spec.HTTPCache.Redis != nil {
+			if mint.Spec.HTTPCache.Redis.KeyPrefix != "" {
+				fmt.Fprintf(buf, "key_prefix = %q\n", mint.Spec.HTTPCache.Redis.KeyPrefix)
+			}
+			if mint.Spec.HTTPCache.Redis.ConnectionString != "" {
+				fmt.Fprintf(buf, "connection_string = %q\n", mint.Spec.HTTPCache.Redis.ConnectionString)
+			}
 		}
 	}
 
@@ -120,6 +141,9 @@ func writeInfoSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 		buf.WriteString("output = \"stderr\"\n")
 		if mint.Spec.Logging.Level != "" {
 			fmt.Fprintf(buf, "console_level = %q\n", mint.Spec.Logging.Level)
+		}
+		if mint.Spec.Logging.FileLevel != "" {
+			fmt.Fprintf(buf, "file_level = %q\n", mint.Spec.Logging.FileLevel)
 		}
 	}
 }
@@ -199,46 +223,62 @@ func writeDatabaseSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint, dbPas
 	if mint.Spec.Auth != nil && mint.Spec.Auth.Enabled &&
 		mint.Spec.Auth.Database != nil && mint.Spec.Auth.Database.Postgres != nil {
 		buf.WriteString("\n[auth_database.postgres]\n")
-		buf.WriteString("url = \"\"\n")
-		buf.WriteString("tls_mode = \"disable\"\n")
+		authPg := mint.Spec.Auth.Database.Postgres
+		if authPg.URL != "" {
+			fmt.Fprintf(buf, "url = %q\n", authPg.URL)
+		} else {
+			buf.WriteString("url = \"\"\n")
+		}
+		tlsMode := authPg.TLSMode
+		if tlsMode == "" {
+			tlsMode = "disable"
+		}
+		fmt.Fprintf(buf, "tls_mode = %q\n", tlsMode)
+		if authPg.MaxConnections != nil {
+			fmt.Fprintf(buf, "max_connections = %d\n", *authPg.MaxConnections)
+		}
+		if authPg.ConnectionTimeoutSeconds != nil {
+			fmt.Fprintf(buf, "connection_timeout_seconds = %d\n", *authPg.ConnectionTimeoutSeconds)
+		}
 	}
 }
 
-func writeLnSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
+func writePaymentBackendSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
+	backend := mint.Spec.PaymentBackend.ActiveBackend()
 	buf.WriteString("\n[ln]\n")
-	fmt.Fprintf(buf, "ln_backend = %q\n", mint.Spec.Lightning.Backend)
-	if mint.Spec.Lightning.MinMint != nil {
-		fmt.Fprintf(buf, "min_mint = %d\n", *mint.Spec.Lightning.MinMint)
+	fmt.Fprintf(buf, "ln_backend = %q\n", backend)
+	if mint.Spec.PaymentBackend.MinMint != nil {
+		fmt.Fprintf(buf, "min_mint = %d\n", *mint.Spec.PaymentBackend.MinMint)
 	}
-	if mint.Spec.Lightning.MaxMint != nil {
-		fmt.Fprintf(buf, "max_mint = %d\n", *mint.Spec.Lightning.MaxMint)
+	if mint.Spec.PaymentBackend.MaxMint != nil {
+		fmt.Fprintf(buf, "max_mint = %d\n", *mint.Spec.PaymentBackend.MaxMint)
 	}
-	if mint.Spec.Lightning.MinMelt != nil {
-		fmt.Fprintf(buf, "min_melt = %d\n", *mint.Spec.Lightning.MinMelt)
+	if mint.Spec.PaymentBackend.MinMelt != nil {
+		fmt.Fprintf(buf, "min_melt = %d\n", *mint.Spec.PaymentBackend.MinMelt)
 	}
-	if mint.Spec.Lightning.MaxMelt != nil {
-		fmt.Fprintf(buf, "max_melt = %d\n", *mint.Spec.Lightning.MaxMelt)
+	if mint.Spec.PaymentBackend.MaxMelt != nil {
+		fmt.Fprintf(buf, "max_melt = %d\n", *mint.Spec.PaymentBackend.MaxMelt)
 	}
 
-	switch mint.Spec.Lightning.Backend {
-	case mintv1alpha1.LightningBackendLND:
+	switch backend {
+	case mintv1alpha1.PaymentBackendLND:
 		writeLNDSection(buf, mint)
-	case mintv1alpha1.LightningBackendCLN:
+	case mintv1alpha1.PaymentBackendCLN:
 		writeCLNSection(buf, mint)
-	case mintv1alpha1.LightningBackendLNBits:
+	case mintv1alpha1.PaymentBackendLNBits:
 		writeLNBitsSection(buf, mint)
-	case mintv1alpha1.LightningBackendFakeWallet:
+	case mintv1alpha1.PaymentBackendFakeWallet:
 		writeFakeWalletSection(buf, mint)
-	case mintv1alpha1.LightningBackendGRPCProcessor:
+	case mintv1alpha1.PaymentBackendGRPCProcessor:
 		writeGRPCProcessorSection(buf, mint)
 	}
 }
 
 func writeLNDSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
-	if mint.Spec.Lightning.LND == nil {
+	if mint.Spec.PaymentBackend.LND == nil {
 		return
 	}
-	lnd := mint.Spec.Lightning.LND
+	lnd := mint.Spec.PaymentBackend.LND
 	buf.WriteString("\n[lnd]\n")
 	fmt.Fprintf(buf, "address = %q\n", lnd.Address)
 	if lnd.MacaroonSecretRef != nil {
@@ -256,12 +296,15 @@ func writeLNDSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 }
 
 func writeCLNSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
-	if mint.Spec.Lightning.CLN == nil {
+	if mint.Spec.PaymentBackend.CLN == nil {
 		return
 	}
-	cln := mint.Spec.Lightning.CLN
+	cln := mint.Spec.PaymentBackend.CLN
 	buf.WriteString("\n[cln]\n")
 	fmt.Fprintf(buf, "rpc_path = %q\n", cln.RPCPath)
+	if cln.Bolt12 != nil {
+		fmt.Fprintf(buf, "bolt12 = %t\n", *cln.Bolt12)
+	}
 	if cln.FeePercent != nil {
 		fmt.Fprintf(buf, "fee_percent = %f\n", *cln.FeePercent)
 	}
@@ -271,13 +314,20 @@ func writeCLNSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 }
 
 func writeLNBitsSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
-	if mint.Spec.Lightning.LNBits == nil {
+	if mint.Spec.PaymentBackend.LNBits == nil {
 		return
 	}
+	lnbits := mint.Spec.PaymentBackend.LNBits
 	buf.WriteString("\n[lnbits]\n")
-	fmt.Fprintf(buf, "lnbits_api = %q\n", mint.Spec.Lightning.LNBits.API)
-	if mint.Spec.Lightning.LNBits.RetroAPI {
+	fmt.Fprintf(buf, "lnbits_api = %q\n", lnbits.API)
+	if lnbits.RetroAPI {
 		buf.WriteString("retro_api = true\n")
+	}
+	if lnbits.FeePercent != nil {
+		fmt.Fprintf(buf, "fee_percent = %f\n", *lnbits.FeePercent)
+	}
+	if lnbits.ReserveFeeMin != nil {
+		fmt.Fprintf(buf, "reserve_fee_min = %d\n", *lnbits.ReserveFeeMin)
 	}
 }
 
@@ -288,7 +338,7 @@ func writeFakeWalletSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	reserveFeeMin := int32(1)
 	minDelayTime := int32(1)
 	maxDelayTime := int32(3)
-	if fw := mint.Spec.Lightning.FakeWallet; fw != nil {
+	if fw := mint.Spec.PaymentBackend.FakeWallet; fw != nil {
 		if len(fw.SupportedUnits) > 0 {
 			supportedUnits = fw.SupportedUnits
 		}
@@ -313,10 +363,10 @@ func writeFakeWalletSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 }
 
 func writeGRPCProcessorSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
-	if mint.Spec.Lightning.GRPCProcessor == nil {
+	if mint.Spec.PaymentBackend.GRPCProcessor == nil {
 		return
 	}
-	gp := mint.Spec.Lightning.GRPCProcessor
+	gp := mint.Spec.PaymentBackend.GRPCProcessor
 	buf.WriteString("\n[grpc_processor]\n")
 
 	// addr is passed to tonic Channel::from_shared("{addr}:{port}") which requires a URI scheme.
@@ -371,16 +421,19 @@ func writeLDKNodeSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	if ldk.StorageDirPath != "" {
 		fmt.Fprintf(buf, "storage_dir_path = %q\n", ldk.StorageDirPath)
 	}
+	if ldk.LogDirPath != "" {
+		fmt.Fprintf(buf, "log_dir_path = %q\n", ldk.LogDirPath)
+	}
 	host := ldk.Host
 	if host == "" {
 		host = "0.0.0.0"
 	}
-	fmt.Fprintf(buf, "host = %q\n", host)
+	fmt.Fprintf(buf, "ldk_node_host = %q\n", host)
 	port := ldk.Port
 	if port == 0 {
 		port = 8090
 	}
-	fmt.Fprintf(buf, "port = %d\n", port)
+	fmt.Fprintf(buf, "ldk_node_port = %d\n", port)
 	if len(ldk.AnnounceAddresses) > 0 {
 		fmt.Fprintf(buf, "announce_addresses = [\"%s\"]\n", strings.Join(ldk.AnnounceAddresses, `", "`))
 	}
@@ -416,23 +469,33 @@ func writeAuthSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	if auth.MintMaxBat != nil {
 		fmt.Fprintf(buf, "mint_max_bat = %d\n", *auth.MintMaxBat)
 	}
-	if auth.EnabledMint != nil {
-		fmt.Fprintf(buf, "enabled_mint = %t\n", *auth.EnabledMint)
+	// Per-endpoint auth levels
+	if auth.Mint != "" {
+		fmt.Fprintf(buf, "mint = %q\n", auth.Mint)
 	}
-	if auth.EnabledMelt != nil {
-		fmt.Fprintf(buf, "enabled_melt = %t\n", *auth.EnabledMelt)
+	if auth.GetMintQuote != "" {
+		fmt.Fprintf(buf, "get_mint_quote = %q\n", auth.GetMintQuote)
 	}
-	if auth.EnabledSwap != nil {
-		fmt.Fprintf(buf, "enabled_swap = %t\n", *auth.EnabledSwap)
+	if auth.CheckMintQuote != "" {
+		fmt.Fprintf(buf, "check_mint_quote = %q\n", auth.CheckMintQuote)
 	}
-	if auth.EnabledCheckMintQuote != nil {
-		fmt.Fprintf(buf, "enabled_check_mint_quote = %t\n", *auth.EnabledCheckMintQuote)
+	if auth.Melt != "" {
+		fmt.Fprintf(buf, "melt = %q\n", auth.Melt)
 	}
-	if auth.EnabledCheckMeltQuote != nil {
-		fmt.Fprintf(buf, "enabled_check_melt_quote = %t\n", *auth.EnabledCheckMeltQuote)
+	if auth.GetMeltQuote != "" {
+		fmt.Fprintf(buf, "get_melt_quote = %q\n", auth.GetMeltQuote)
 	}
-	if auth.EnabledRestore != nil {
-		fmt.Fprintf(buf, "enabled_restore = %t\n", *auth.EnabledRestore)
+	if auth.CheckMeltQuote != "" {
+		fmt.Fprintf(buf, "check_melt_quote = %q\n", auth.CheckMeltQuote)
+	}
+	if auth.Swap != "" {
+		fmt.Fprintf(buf, "swap = %q\n", auth.Swap)
+	}
+	if auth.Restore != "" {
+		fmt.Fprintf(buf, "restore = %q\n", auth.Restore)
+	}
+	if auth.CheckProofState != "" {
+		fmt.Fprintf(buf, "check_proof_state = %q\n", auth.CheckProofState)
 	}
 }
 
@@ -451,4 +514,33 @@ func writeManagementRPCSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 		port = 8086
 	}
 	fmt.Fprintf(buf, "port = %d\n", port)
+}
+
+func writeLimitsSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
+	if mint.Spec.Limits == nil {
+		return
+	}
+	buf.WriteString("\n[limits]\n")
+	if mint.Spec.Limits.MaxInputs != nil {
+		fmt.Fprintf(buf, "max_inputs = %d\n", *mint.Spec.Limits.MaxInputs)
+	}
+	if mint.Spec.Limits.MaxOutputs != nil {
+		fmt.Fprintf(buf, "max_outputs = %d\n", *mint.Spec.Limits.MaxOutputs)
+	}
+}
+
+func writePrometheusSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
+	if mint.Spec.Prometheus == nil || !mint.Spec.Prometheus.Enabled {
+		return
+	}
+	buf.WriteString("\n[prometheus]\n")
+	buf.WriteString("enabled = true\n")
+	address := mint.Spec.Prometheus.Address
+	if address == "" {
+		address = "0.0.0.0"
+	}
+	fmt.Fprintf(buf, "address = %q\n", address)
+	if mint.Spec.Prometheus.Port != nil {
+		fmt.Fprintf(buf, "port = %d\n", *mint.Spec.Prometheus.Port)
+	}
 }

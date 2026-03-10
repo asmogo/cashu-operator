@@ -12,7 +12,7 @@ spec:
     engine: postgres
     postgres:
       autoProvision: true
-  lightning:
+  paymentBackend:
     backend: lnd
     lnd:
       address: https://lnd.lightning.svc.cluster.local:10009
