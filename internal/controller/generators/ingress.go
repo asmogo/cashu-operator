@@ -59,7 +59,7 @@ func GenerateIngress(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*net
 
 		issuerKind := mint.Spec.Ingress.TLS.CertManager.IssuerKind
 		if issuerKind == "" {
-			issuerKind = "ClusterIssuer"
+			issuerKind = mintv1alpha1.DefaultClusterIssuerKind
 		}
 
 		annotations["cert-manager.io/issuer"] = mint.Spec.Ingress.TLS.CertManager.IssuerName

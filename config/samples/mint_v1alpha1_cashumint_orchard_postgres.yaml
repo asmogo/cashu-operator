@@ -1,0 +1,44 @@
+# CashuMint with Orchard enabled against an auto-provisioned PostgreSQL mint.
+# Secrets referenced below should exist in the same namespace before applying.
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-orchard-postgres
+spec:
+  image: cashubtc/mintd:0.15.0
+  mintInfo:
+    url: https://mint-postgres.example.com
+    mnemonicSecretRef:
+      name: cashumint-orchard-postgres-secrets
+      key: mnemonic
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 10Gi
+        version: "16"
+  managementRPC:
+    enabled: true
+  orchard:
+    enabled: true
+    setupKeySecretRef:
+      name: orchard-setup
+      key: setup-key
+    mint:
+      rpc:
+        mTLS: true
+    storage:
+      size: 10Gi
+    ingress:
+      enabled: true
+      host: orchard-postgres.mint.dev.ucash.space
+      tls:
+        enabled: true
+        certManager:
+          enabled: true
+          issuerName: letsencrypt
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat

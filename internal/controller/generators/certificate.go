@@ -54,7 +54,7 @@ func GenerateCertificate(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (
 
 	issuerKind := mint.Spec.Ingress.TLS.CertManager.IssuerKind
 	if issuerKind == "" {
-		issuerKind = "ClusterIssuer"
+		issuerKind = mintv1alpha1.DefaultClusterIssuerKind
 	}
 
 	// Default duration: 90 days (2160h)
@@ -78,6 +78,73 @@ func GenerateCertificate(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (
 			DNSNames:   []string{mint.Spec.Ingress.Host},
 			IssuerRef: certmanagermeta.ObjectReference{
 				Name:  mint.Spec.Ingress.TLS.CertManager.IssuerName,
+				Kind:  issuerKind,
+				Group: "cert-manager.io",
+			},
+			Duration:    &metav1.Duration{Duration: duration},
+			RenewBefore: &metav1.Duration{Duration: renewBefore},
+			Usages: []certmanagerv1.KeyUsage{
+				certmanagerv1.UsageDigitalSignature,
+				certmanagerv1.UsageKeyEncipherment,
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(mint, cert, scheme); err != nil {
+		return nil, fmt.Errorf("failed to set controller reference: %w", err)
+	}
+
+	return cert, nil
+}
+
+// GenerateOrchardCertificate creates a Certificate for Orchard.
+func GenerateOrchardCertificate(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*certmanagerv1.Certificate, error) {
+	if mint.Spec.Orchard == nil || !mint.Spec.Orchard.Enabled ||
+		mint.Spec.Orchard.Ingress == nil || !mint.Spec.Orchard.Ingress.Enabled {
+		return nil, nil
+	}
+
+	if mint.Spec.Orchard.Ingress.TLS == nil || !mint.Spec.Orchard.Ingress.TLS.Enabled ||
+		mint.Spec.Orchard.Ingress.TLS.CertManager == nil || !mint.Spec.Orchard.Ingress.TLS.CertManager.Enabled {
+		return nil, nil
+	}
+
+	labels := map[string]string{
+		"app.kubernetes.io/name":       "cashu-mint",
+		"app.kubernetes.io/instance":   mint.Name,
+		"app.kubernetes.io/component":  "orchard",
+		"app.kubernetes.io/managed-by": "cashu-operator",
+	}
+
+	secretName := mint.Spec.Orchard.Ingress.TLS.SecretName
+	if secretName == "" {
+		secretName = orchardResourceName(mint) + "-tls"
+	}
+
+	issuerKind := mint.Spec.Orchard.Ingress.TLS.CertManager.IssuerKind
+	if issuerKind == "" {
+		issuerKind = mintv1alpha1.DefaultClusterIssuerKind
+	}
+
+	duration := 2160 * time.Hour
+	renewBefore := 360 * time.Hour
+
+	cert := &certmanagerv1.Certificate{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "cert-manager.io/v1",
+			Kind:       "Certificate",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        orchardResourceName(mint),
+			Namespace:   mint.Namespace,
+			Labels:      labels,
+			Annotations: mint.Spec.Orchard.Ingress.Annotations,
+		},
+		Spec: certmanagerv1.CertificateSpec{
+			SecretName: secretName,
+			DNSNames:   []string{mint.Spec.Orchard.Ingress.Host},
+			IssuerRef: certmanagermeta.ObjectReference{
+				Name:  mint.Spec.Orchard.Ingress.TLS.CertManager.IssuerName,
 				Kind:  issuerKind,
 				Group: "cert-manager.io",
 			},

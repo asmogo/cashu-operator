@@ -44,7 +44,7 @@ spec:
 
 | Field                      | Type                                    | Required | Default                   | Validation                                     |
 |---------------------------|-----------------------------------------|----------|---------------------------|------------------------------------------------|
-| `image`                   | string                                  | No       | `ghcr.io/cashubtc/cdk-mintd:v0.15.0` | —                                      |
+| `image`                   | string                                  | No       | `cashubtc/mintd:0.15.0` | —                                      |
 | `imagePullPolicy`         | string (`Always`, `Never`, `IfNotPresent`) | No    | `IfNotPresent`            | Enum                                          |
 | `imagePullSecrets`        | []`LocalObjectReference`                | No       | —                         | —                                              |
 | `replicas`                | int32                                   | No       | 1                         | Min=1, Max=1                                   |
@@ -58,6 +58,7 @@ spec:
 | `storage.storageClassName`| string pointer                          | No       | —                         | —                                              |
 | `backup`                  | `BackupConfig`                          | No       | disabled                  | S3-compatible backup policy (schedule, retention, destination secrets) |
 | `paymentProcessors`       | []`PaymentProcessorSpec`                | No       | —                         | Optional operator-managed payment processor workloads |
+| `orchard`                 | `OrchardConfig`                         | No       | disabled                  | Optional Orchard sidecar, PVC, Service, and Ingress |
 
 ### 2.2 Mint Information (`spec.mintInfo`)
 
@@ -231,13 +232,100 @@ spec:
 
 ### 2.8 Management RPC (`spec.managementRPC`)
 
-| Field     | Type  | Required | Default  | Notes |
-|-----------|-------|----------|----------|-------|
-| `enabled` | bool  | Yes      | `false`  | —     |
-| `address` | string| No       | `127.0.0.1` | —  |
-| `port`    | int32 | No       | `8086`   | —     |
+| Field          | Type  | Required | Default  | Notes |
+|----------------|-------|----------|----------|-------|
+| `enabled`      | bool  | Yes      | `false`  | —     |
+| `address`      | string| No       | `127.0.0.1` | —  |
+| `port`         | int32 | No       | `8086`   | —     |
+| `tlsSecretRef` | `LocalObjectReference` | No | — | Secret containing management RPC TLS files (`ca.pem`, `server.pem`, `server.key`, optionally `client.pem`, `client.key`) |
 
-### 2.9 Ingress (`spec.ingress`)
+### 2.9 Orchard (`spec.orchard`)
+
+| Field                      | Type                           | Required | Default | Notes |
+|---------------------------|--------------------------------|----------|---------|-------|
+| `enabled`                 | bool                           | Yes      | `false` | Deploy Orchard alongside the mint |
+| `image`                   | string                         | No       | derived from mint DB engine | Defaults to `ghcr.io/orangeshyguy21/orchard-mintdb-sqlite:latest` or `...-postgres:latest` |
+| `imagePullPolicy`         | string (`Always`,`Never`,`IfNotPresent`) | No | `IfNotPresent` | — |
+| `host`                    | string                         | No       | `0.0.0.0` | Orchard listen address |
+| `port`                    | int32                          | No       | `3321`  | Orchard listen port |
+| `basePath`                | string                         | No       | `api`   | Orchard API base path |
+| `logLevel`                | string                         | No       | `warn`  | Orchard log level |
+| `setupKeySecretRef`       | `SecretKeySelector`            | Yes      | —       | Required Orchard setup key |
+| `throttleTTL`             | int32 pointer                  | No       | `60000` | Request throttling window in milliseconds |
+| `throttleLimit`           | int32 pointer                  | No       | `20`    | Request limit per throttling window |
+| `proxy`                   | string                         | No       | —       | Optional proxy (for example Tor SOCKS) |
+| `compression`             | bool pointer                   | No       | —       | Enables Orchard HTTP compression |
+| `mint`                    | `OrchardMintConfig`            | No       | auto-wired | Overrides mint API/DB/RPC wiring if needed |
+| `bitcoin`                 | `OrchardBitcoinConfig`         | No       | —       | Optional Bitcoin Core RPC integration |
+| `lightning`               | `OrchardLightningConfig`       | No       | —       | Optional LND/CLN integration |
+| `taprootAssets`           | `OrchardTaprootAssetsConfig`   | No       | —       | Optional `tapd` integration |
+| `ai`                      | `OrchardAIConfig`              | No       | —       | Optional AI endpoint |
+| `service`                 | `ServiceConfig`                | No       | `ClusterIP` | Orchard-specific Service config |
+| `ingress`                 | `IngressConfig`                | No       | disabled | Orchard-specific Ingress config |
+| `storage`                 | `StorageConfig`                | No       | `10Gi`  | Orchard application-state PVC sizing |
+| `resources`               | `ResourceRequirements`         | No       | CPU `100m-500m`, Mem `128Mi-512Mi` (implicit) | Orchard container resources |
+| `containerSecurityContext`| `SecurityContext`              | No       | inherits mint default | Orchard container security context |
+| `extraEnv`                | []`EnvVar`                     | No       | —       | Appended to generated Orchard env vars |
+
+#### OrchardMintConfig
+
+| Field                    | Type                 | Required | Default | Notes |
+|--------------------------|----------------------|----------|---------|-------|
+| `type`                   | string (`cdk`,`nutshell`) | No   | `cdk`   | Expected mint implementation |
+| `api`                    | string               | No       | auto-wired | Overrides Orchard mint API target |
+| `database`               | string               | No       | auto-wired | Overrides Orchard mint DB URL/path |
+| `databaseCaSecretRef`    | `SecretKeySelector`  | No       | —       | Optional PostgreSQL CA material |
+| `databaseCertSecretRef`  | `SecretKeySelector`  | No       | —       | Optional PostgreSQL client certificate material |
+| `databaseKeySecretRef`   | `SecretKeySelector`  | No       | —       | Optional PostgreSQL client key material |
+| `rpc`                    | `OrchardMintRPCConfig` | No     | auto-wired | Overrides Orchard mint management RPC target |
+
+#### OrchardMintRPCConfig
+
+| Field    | Type         | Required | Default | Notes |
+|----------|--------------|----------|---------|-------|
+| `host`   | string       | No       | `127.0.0.1` | Orchard talks to the colocated mint by default |
+| `port`   | int32        | No       | `8086`  | Mint management RPC port |
+| `mTLS`   | bool pointer | No       | inferred from `spec.managementRPC.tlsSecretRef` | Enables Orchard mTLS to the mint management RPC |
+
+#### OrchardBitcoinConfig
+
+| Field                | Type                | Required | Default | Notes |
+|----------------------|---------------------|----------|---------|-------|
+| `type`               | string (`core`)     | No       | `core`  | Bitcoin backend type |
+| `rpcHost`            | string              | Yes      | —       | Bitcoin RPC host |
+| `rpcPort`            | int32               | Yes      | —       | Bitcoin RPC port |
+| `rpcUserSecretRef`   | `SecretKeySelector` | Yes      | —       | Bitcoin RPC username |
+| `rpcPasswordSecretRef` | `SecretKeySelector` | Yes    | —       | Bitcoin RPC password |
+
+#### OrchardLightningConfig
+
+| Field               | Type                | Required | Default | Notes |
+|---------------------|---------------------|----------|---------|-------|
+| `type`              | string (`lnd`,`cln`) | Yes    | —       | Lightning backend type |
+| `rpcHost`           | string              | Yes      | —       | Lightning RPC host |
+| `rpcPort`           | int32               | Yes      | —       | Lightning RPC port |
+| `macaroonSecretRef` | `SecretKeySelector` | Conditional | —    | Required for `type=lnd` |
+| `certSecretRef`     | `SecretKeySelector` | Conditional | —    | Required for `type=lnd`; optional for CLN if used |
+| `keySecretRef`      | `SecretKeySelector` | Conditional | —    | Required for `type=cln` |
+| `caSecretRef`       | `SecretKeySelector` | Conditional | —    | Required for `type=cln` |
+
+#### OrchardTaprootAssetsConfig
+
+| Field               | Type                | Required | Default | Notes |
+|---------------------|---------------------|----------|---------|-------|
+| `type`              | string (`tapd`)     | No       | `tapd`  | Taproot Assets backend type |
+| `rpcHost`           | string              | Yes      | —       | Taproot Assets RPC host |
+| `rpcPort`           | int32               | Yes      | —       | Taproot Assets RPC port |
+| `macaroonSecretRef` | `SecretKeySelector` | Yes      | —       | Taproot Assets macaroon |
+| `certSecretRef`     | `SecretKeySelector` | Yes      | —       | Taproot Assets TLS certificate |
+
+#### OrchardAIConfig
+
+| Field | Type   | Required | Default | Notes |
+|-------|--------|----------|---------|-------|
+| `api` | string | Yes      | —       | AI API endpoint (for example Ollama) |
+
+### 2.10 Ingress (`spec.ingress`)
 
 | Field        | Type          | Required | Default | Notes |
 |--------------|---------------|----------|---------|-------|
@@ -251,7 +339,7 @@ spec:
 | `tls.certManager.issuerName` | string | Conditional | — | Required when enabled |
 | `tls.certManager.issuerKind` | string | No | `ClusterIssuer` | Enum: `Issuer`,`ClusterIssuer` |
 
-### 2.10 Service (`spec.service`)
+### 2.11 Service (`spec.service`)
 
 | Field              | Type                | Required | Default       | Notes |
 |--------------------|---------------------|----------|---------------|-------|
@@ -259,7 +347,7 @@ spec:
 | `annotations`      | map[string]string   | No       | —             | —     |
 | `loadBalancerIP`   | string              | No       | —             | For LoadBalancer type only |
 
-### 2.11 Backup (`spec.backup`)
+### 2.12 Backup (`spec.backup`)
 
 | Field                              | Type                  | Required | Default       | Notes |
 |------------------------------------|-----------------------|----------|---------------|-------|
@@ -320,8 +408,10 @@ Each condition is represented with `type`, `status`, `reason`, `message`, and `o
 - Webhooks ensure required backend sections are present (`lnd`, `cln`, `lnbits`, `fakewallet`, `grpcprocessor`).
 - `database.postgres` must include either URL/URL secret or `autoProvision=true`.
 - `ingress.host` is required when ingress enabled; cert-manager issuer fields must be set when cert-manager is enabled.
+- `orchard.setupKeySecretRef` is required when Orchard is enabled.
+- Orchard currently supports sqlite and PostgreSQL mint databases; `redb` is not supported for Orchard introspection.
 - Resource requests must not exceed limits.
-- Default `spec.image` is `ghcr.io/cashubtc/cdk-mintd:v0.15.0`; for PostgreSQL mints using `cdk-mintd:v0.15*`, admission warnings remind operators to take a verified backup before rollout.
+- Default `spec.image` is `cashubtc/mintd:0.15.0`; for PostgreSQL mints using `mintd:0.15*`, take a verified backup before rollout because CDK v0.15 performs database migrations.
 - Most optional numeric/string fields have server-side defaults (see sections above).
 
 ---
@@ -337,7 +427,7 @@ metadata:
   name: cashumint-prod
   namespace: cashu
 spec:
-  image: ghcr.io/cashubtc/cdk-mintd:v0.15.0
+  image: cashubtc/mintd:0.15.0
   mintInfo:
     url: https://mint.example.com
     mnemonicSecretRef:

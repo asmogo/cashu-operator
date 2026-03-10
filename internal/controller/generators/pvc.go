@@ -42,7 +42,7 @@ func GeneratePVC(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*corev1.
 		"app.kubernetes.io/managed-by": "cashu-operator",
 	}
 
-	size := "10Gi"
+	size := mintv1alpha1.DefaultStorageSize
 	if mint.Spec.Storage != nil && mint.Spec.Storage.Size != "" {
 		size = mint.Spec.Storage.Size
 	}

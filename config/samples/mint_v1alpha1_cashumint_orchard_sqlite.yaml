@@ -1,0 +1,38 @@
+# CashuMint with Orchard enabled against a sqlite-backed mint
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-orchard-sqlite
+spec:
+  image: cashubtc/mintd:0.15.0
+  mintInfo:
+    url: https://mint-sqlite.example.com
+    mnemonicSecretRef:
+      name: cashumint-orchard-sqlite-secrets
+      key: mnemonic
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  storage:
+    size: 5Gi
+  managementRPC:
+    enabled: true
+  orchard:
+    enabled: true
+    setupKeySecretRef:
+      name: orchard-setup
+      key: setup-key
+    storage:
+      size: 5Gi
+    service:
+      type: ClusterIP
+    ingress:
+      enabled: true
+      host: orchard-sqlite.example.com
+    ai:
+      api: http://ollama.default.svc.cluster.local:11434
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat

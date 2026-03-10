@@ -443,7 +443,7 @@ func writeLDKNodeSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	}
 	webserverHost := ldk.WebserverHost
 	if webserverHost == "" {
-		webserverHost = "127.0.0.1"
+		webserverHost = mintv1alpha1.DefaultLoopbackHost
 	}
 	fmt.Fprintf(buf, "webserver_host = %q\n", webserverHost)
 	webserverPort := ldk.WebserverPort
@@ -506,7 +506,7 @@ func writeManagementRPCSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 	buf.WriteString("\n[mint_management_rpc]\n")
 	address := mint.Spec.ManagementRPC.Address
 	if address == "" {
-		address = "127.0.0.1"
+		address = mintv1alpha1.DefaultLoopbackHost
 	}
 	fmt.Fprintf(buf, "address = %q\n", address)
 	port := mint.Spec.ManagementRPC.Port
@@ -514,6 +514,9 @@ func writeManagementRPCSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 		port = 8086
 	}
 	fmt.Fprintf(buf, "port = %d\n", port)
+	if mint.Spec.ManagementRPC.TLSSecretRef != nil {
+		fmt.Fprintf(buf, "tls_dir_path = %q\n", orchardManagementRPCTLSMountPath)
+	}
 }
 
 func writeLimitsSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {

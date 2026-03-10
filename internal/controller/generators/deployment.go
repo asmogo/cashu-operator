@@ -90,6 +90,8 @@ func GenerateDeployment(mint *mintv1alpha1.CashuMint, configHash string, scheme 
 // generatePodSpec creates the pod specification for the mint
 func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	containers := []corev1.Container{}
+	volumes := generateVolumes(mint)
+	volumes = append(volumes, GenerateOrchardVolumes(mint)...)
 
 	backend := mint.Spec.PaymentBackend.ActiveBackend()
 
@@ -106,9 +108,12 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 		containers = append(containers, generateLDKContainer(mint))
 	}
 	containers = append(containers, generateMintContainer(mint))
+	if orchardEnabled(mint) {
+		containers = append(containers, GenerateOrchardContainer(mint))
+	}
 	podSpec := corev1.PodSpec{
 		Containers:       containers,
-		Volumes:          generateVolumes(mint),
+		Volumes:          volumes,
 		ImagePullSecrets: mint.Spec.ImagePullSecrets,
 		NodeSelector:     mint.Spec.NodeSelector,
 		Tolerations:      mint.Spec.Tolerations,
@@ -123,7 +128,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	image := mint.Spec.Image
 	if image == "" {
-		image = "ghcr.io/cashubtc/cdk-mintd:latest"
+		image = mintv1alpha1.DefaultMintImage
 	}
 
 	imagePullPolicy := mint.Spec.ImagePullPolicy
@@ -503,6 +508,14 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 		})
 	}
 
+	if mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.TLSSecretRef != nil {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      "management-rpc-tls",
+			MountPath: orchardManagementRPCTLSMountPath,
+			ReadOnly:  true,
+		})
+	}
+
 	return mounts
 }
 
@@ -577,6 +590,17 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: mint.Spec.PaymentBackend.GRPCProcessor.TLSSecretRef.Name,
+				},
+			},
+		})
+	}
+
+	if mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.TLSSecretRef != nil {
+		volumes = append(volumes, corev1.Volume{
+			Name: "management-rpc-tls",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: mint.Spec.ManagementRPC.TLSSecretRef.Name,
 				},
 			},
 		})
