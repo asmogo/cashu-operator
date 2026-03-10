@@ -12,8 +12,7 @@ spec:
     engine: postgres
     postgres:
       autoProvision: true
-  lightning:
-    backend: lnd
+  paymentBackend:
     lnd:
       address: https://lnd.lightning.svc.cluster.local:10009
       macaroonSecretRef:

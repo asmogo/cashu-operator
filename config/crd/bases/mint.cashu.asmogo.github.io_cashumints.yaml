@@ -21,7 +21,7 @@ spec:
     - jsonPath: .status.phase
       name: Status
       type: string
-    - jsonPath: .spec.lightning.backend
+    - jsonPath: .status.backendType
       name: Backend
       type: string
     - jsonPath: .metadata.creationTimestamp
@@ -965,8 +965,47 @@ spec:
                     type: object
                 type: object
               auth:
-                description: Auth specifies authentication configuration
+                description: Auth specifies authentication configuration (NUT-21/NUT-22)
                 properties:
+                  checkMeltQuote:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: CheckMeltQuote is the auth level for the check_melt_quote
+                      endpoint
+                    type: string
+                  checkMintQuote:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: CheckMintQuote is the auth level for the check_mint_quote
+                      endpoint
+                    type: string
+                  checkProofState:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: CheckProofState is the auth level for the check_proof_state
+                      endpoint
+                    type: string
                   database:
                     description: Database specifies authentication database configuration
                     properties:
@@ -1115,33 +1154,56 @@ spec:
                     default: false
                     description: Enabled controls whether authentication is active
                     type: boolean
-                  enabledCheckMeltQuote:
-                    default: true
-                    description: EnabledCheckMeltQuote controls melt quote checking
-                    type: boolean
-                  enabledCheckMintQuote:
-                    default: true
-                    description: EnabledCheckMintQuote controls mint quote checking
-                    type: boolean
-                  enabledMelt:
-                    default: true
-                    description: EnabledMelt controls whether authenticated melting
-                      is enabled
-                    type: boolean
-                  enabledMint:
-                    default: true
-                    description: EnabledMint controls whether authenticated minting
-                      is enabled
-                    type: boolean
-                  enabledRestore:
-                    default: true
-                    description: EnabledRestore controls whether restore is enabled
-                    type: boolean
-                  enabledSwap:
-                    default: true
-                    description: EnabledSwap controls whether authenticated swapping
-                      is enabled
-                    type: boolean
+                  getMeltQuote:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: GetMeltQuote is the auth level for the get_melt_quote
+                      endpoint
+                    type: string
+                  getMintQuote:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: GetMintQuote is the auth level for the get_mint_quote
+                      endpoint
+                    type: string
+                  melt:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: Melt is the auth level for the melt endpoint
+                    type: string
+                  mint:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: Mint is the auth level for the mint endpoint
+                    type: string
                   mintMaxBat:
                     default: 50
                     description: MintMaxBat is the maximum batch size for mint operations
@@ -1152,6 +1214,30 @@ spec:
                     type: string
                   openidDiscovery:
                     description: OpenIDDiscovery is the OpenID Connect discovery URL
+                    type: string
+                  restore:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: Restore is the auth level for the restore endpoint
+                    type: string
+                  swap:
+                    allOf:
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    - enum:
+                      - clear
+                      - blind
+                      - none
+                    description: Swap is the auth level for the swap endpoint
                     type: string
                 required:
                 - enabled
@@ -1881,6 +1967,35 @@ spec:
                     default: ghcr.io/cashubtc/ldk-node:latest
                     description: Image specifies the LDK node container image to use
                     type: string
+                  logDirPath:
+                    description: LogDirPath is the directory path for LDK node logs
+                    type: string
+                  mnemonicSecretRef:
+                    description: |-
+                      MnemonicSecretRef references a Secret containing the LDK node BIP39 mnemonic.
+                      Required for new nodes. For existing nodes, if omitted the node uses its stored seed.
+                    properties:
+                      key:
+                        description: The key of the secret to select from.  Must be
+                          a valid secret key.
+                        type: string
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      optional:
+                        description: Specify whether the Secret or its key must be
+                          defined
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
                   port:
                     default: 8090
                     description: Port is the LDK node listening port
@@ -1911,23 +2026,193 @@ spec:
                 required:
                 - enabled
                 type: object
-              lightning:
-                description: Lightning specifies the Lightning Network backend configuration
+              limits:
+                description: Limits specifies transaction input/output limits for
+                  DoS protection
                 properties:
-                  backend:
-                    description: Backend specifies which Lightning backend to use
+                  maxInputs:
+                    description: MaxInputs is the maximum number of inputs allowed
+                      per transaction (swap/melt)
+                    format: int32
+                    type: integer
+                  maxOutputs:
+                    description: MaxOutputs is the maximum number of outputs allowed
+                      per transaction (mint/swap/melt)
+                    format: int32
+                    type: integer
+                type: object
+              logging:
+                description: Logging specifies logging configuration
+                properties:
+                  fileLevel:
+                    description: FileLevel is the file log level (separate from console
+                      level)
                     enum:
-                    - lnd
-                    - cln
-                    - lnbits
-                    - fakewallet
-                    - grpcprocessor
+                    - trace
+                    - debug
+                    - info
+                    - warn
+                    - error
                     type: string
-                  cln:
+                  format:
+                    default: json
+                    description: Format is the log format
+                    enum:
+                    - json
+                    - pretty
+                    type: string
+                  level:
+                    default: info
+                    description: Level is the console log level
+                    enum:
+                    - trace
+                    - debug
+                    - info
+                    - warn
+                    - error
+                    type: string
+                type: object
+              managementRPC:
+                description: ManagementRPC enables the management RPC interface
+                properties:
+                  address:
+                    default: 127.0.0.1
+                    description: Address is the listening address
+                    type: string
+                  enabled:
+                    default: false
+                    description: Enabled controls whether management RPC is active
+                    type: boolean
+                  port:
+                    default: 8086
+                    description: Port is the listening port
+                    format: int32
+                    type: integer
+                required:
+                - enabled
+                type: object
+              mintInfo:
+                description: MintInfo contains metadata about the mint
+                properties:
+                  contactEmail:
+                    description: ContactEmail is the contact email
+                    type: string
+                  contactNostrPubkey:
+                    description: ContactNostrPubkey is the Nostr public key for contact
+                    type: string
+                  description:
+                    description: Description is a short description of the mint
+                    type: string
+                  descriptionLong:
+                    description: DescriptionLong is a longer description
+                    type: string
+                  enableSwaggerUi:
+                    description: EnableSwaggerUI enables the Swagger UI
+                    type: boolean
+                  iconUrl:
+                    description: IconURL is the URL to the mint's icon
+                    type: string
+                  inputFeePpk:
+                    description: InputFeePPK is the input fee in parts per thousand
+                    format: int32
+                    type: integer
+                  listenHost:
+                    default: 0.0.0.0
+                    description: ListenHost is the host to bind to (usually 0.0.0.0
+                      in containers)
+                    type: string
+                  listenPort:
+                    default: 8085
+                    description: ListenPort is the port the mint API listens on
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  mnemonicSecretRef:
                     description: |-
-                      CLN specifies Core Lightning backend configuration
-                      Required when backend is "cln"
+                      MnemonicSecretRef references a Secret containing the mnemonic
+                      Required for production, should never be in plain text
                     properties:
+                      key:
+                        description: The key of the secret to select from.  Must be
+                          a valid secret key.
+                        type: string
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      optional:
+                        description: Specify whether the Secret or its key must be
+                          defined
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  motd:
+                    description: MOTD is the message of the day
+                    type: string
+                  name:
+                    description: Name is the display name of the mint
+                    type: string
+                  pubkeyHex:
+                    description: PubkeyHex is the hex pubkey of the mint
+                    type: string
+                  quoteTtl:
+                    description: QuoteTTL specifies time-to-live for mint and melt
+                      quotes
+                    properties:
+                      meltTtl:
+                        default: 120
+                        description: MeltTTL is the time-to-live for melt quotes in
+                          seconds
+                        format: int32
+                        type: integer
+                      mintTtl:
+                        default: 600
+                        description: MintTTL is the time-to-live for mint quotes in
+                          seconds
+                        format: int32
+                        type: integer
+                    type: object
+                  tosUrl:
+                    description: TosURL is the URL to the terms of service
+                    type: string
+                  url:
+                    description: URL is the public URL where the mint is accessible
+                    pattern: ^https?://.*
+                    type: string
+                  useKeysetV2:
+                    description: |-
+                      UseKeysetV2 controls keyset version preference.
+                      true = Force upgrade to V2 (Version01).
+                      false = Force downgrade to V1 (Version00).
+                      If unset (nil), existing keysets are preserved, but new ones use V2.
+                    type: boolean
+                required:
+                - url
+                type: object
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: NodeSelector for pod assignment
+                type: object
+              paymentBackend:
+                description: |-
+                  PaymentBackend specifies the payment backend configuration.
+                  Exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor).
+                properties:
+                  cln:
+                    description: CLN specifies Core Lightning backend configuration
+                    properties:
+                      bolt12:
+                        description: Bolt12 enables BOLT12 support
+                        type: boolean
                       feePercent:
                         default: 0.04
                         description: FeePercent is the fee percentage
@@ -1944,9 +2229,8 @@ spec:
                     - rpcPath
                     type: object
                   fakeWallet:
-                    description: |-
-                      FakeWallet specifies fake wallet configuration (for testing)
-                      Required when backend is "fakewallet"
+                    description: FakeWallet specifies fake wallet configuration (for
+                      testing)
                     properties:
                       feePercent:
                         default: 0.02
@@ -1976,9 +2260,7 @@ spec:
                         type: array
                     type: object
                   grpcProcessor:
-                    description: |-
-                      GRPCProcessor specifies gRPC processor configuration
-                      Required when backend is "grpcprocessor"
+                    description: GRPCProcessor specifies gRPC processor configuration
                     properties:
                       address:
                         description: |-
@@ -2316,9 +2598,7 @@ spec:
                         x-kubernetes-map-type: atomic
                     type: object
                   lnbits:
-                    description: |-
-                      LNBits specifies LNBits backend configuration
-                      Required when backend is "lnbits"
+                    description: LNBits specifies LNBits backend configuration
                     properties:
                       adminApiKeySecretRef:
                         description: AdminAPIKeySecretRef references a Secret containing
@@ -2349,6 +2629,9 @@ spec:
                         description: API is the LNBits API URL
                         pattern: ^https?://.*
                         type: string
+                      feePercent:
+                        description: FeePercent is the fee percentage
+                        type: number
                       invoiceApiKeySecretRef:
                         description: InvoiceAPIKeySecretRef references a Secret containing
                           the invoice API key
@@ -2374,6 +2657,10 @@ spec:
                         - key
                         type: object
                         x-kubernetes-map-type: atomic
+                      reserveFeeMin:
+                        description: ReserveFeeMin is the minimum reserve fee
+                        format: int32
+                        type: integer
                       retroApi:
                         description: RetroAPI enables backward compatibility with
                           LNBits v0 API
@@ -2384,9 +2671,7 @@ spec:
                     - invoiceApiKeySecretRef
                     type: object
                   lnd:
-                    description: |-
-                      LND specifies LND backend configuration
-                      Required when backend is "lnd"
+                    description: LND specifies LND backend configuration
                     properties:
                       address:
                         description: Address is the LND gRPC address
@@ -2470,135 +2755,6 @@ spec:
                     description: MinMint is the minimum amount for minting (in satoshis)
                     format: int64
                     type: integer
-                required:
-                - backend
-                type: object
-              logging:
-                description: Logging specifies logging configuration
-                properties:
-                  format:
-                    default: json
-                    description: Format is the log format
-                    enum:
-                    - json
-                    - pretty
-                    type: string
-                  level:
-                    default: info
-                    description: Level is the log level
-                    enum:
-                    - trace
-                    - debug
-                    - info
-                    - warn
-                    - error
-                    type: string
-                type: object
-              managementRPC:
-                description: ManagementRPC enables the management RPC interface
-                properties:
-                  address:
-                    default: 127.0.0.1
-                    description: Address is the listening address
-                    type: string
-                  enabled:
-                    default: false
-                    description: Enabled controls whether management RPC is active
-                    type: boolean
-                  port:
-                    default: 8086
-                    description: Port is the listening port
-                    format: int32
-                    type: integer
-                required:
-                - enabled
-                type: object
-              mintInfo:
-                description: MintInfo contains metadata about the mint
-                properties:
-                  contactEmail:
-                    description: ContactEmail is the contact email
-                    type: string
-                  contactNostrPubkey:
-                    description: ContactNostrPubkey is the Nostr public key for contact
-                    type: string
-                  description:
-                    description: Description is a short description of the mint
-                    type: string
-                  descriptionLong:
-                    description: DescriptionLong is a longer description
-                    type: string
-                  enableSwaggerUi:
-                    description: EnableSwaggerUI enables the Swagger UI
-                    type: boolean
-                  iconUrl:
-                    description: IconURL is the URL to the mint's icon
-                    type: string
-                  inputFeePpk:
-                    description: InputFeePPK is the input fee in parts per thousand
-                    format: int32
-                    type: integer
-                  listenHost:
-                    default: 0.0.0.0
-                    description: ListenHost is the host to bind to (usually 0.0.0.0
-                      in containers)
-                    type: string
-                  listenPort:
-                    default: 8085
-                    description: ListenPort is the port the mint API listens on
-                    format: int32
-                    maximum: 65535
-                    minimum: 1
-                    type: integer
-                  mnemonicSecretRef:
-                    description: |-
-                      MnemonicSecretRef references a Secret containing the mnemonic
-                      Required for production, should never be in plain text
-                    properties:
-                      key:
-                        description: The key of the secret to select from.  Must be
-                          a valid secret key.
-                        type: string
-                      name:
-                        default: ""
-                        description: |-
-                          Name of the referent.
-                          This field is effectively required, but due to backwards compatibility is
-                          allowed to be empty. Instances of this type with an empty value here are
-                          almost certainly wrong.
-                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
-                        type: string
-                      optional:
-                        description: Specify whether the Secret or its key must be
-                          defined
-                        type: boolean
-                    required:
-                    - key
-                    type: object
-                    x-kubernetes-map-type: atomic
-                  motd:
-                    description: MOTD is the message of the day
-                    type: string
-                  name:
-                    description: Name is the display name of the mint
-                    type: string
-                  pubkeyHex:
-                    description: PubkeyHex is the hex pubkey of the mint
-                    type: string
-                  tosUrl:
-                    description: TosURL is the URL to the terms of service
-                    type: string
-                  url:
-                    description: URL is the public URL where the mint is accessible
-                    pattern: ^https?://.*
-                    type: string
-                required:
-                - url
-                type: object
-              nodeSelector:
-                additionalProperties:
-                  type: string
-                description: NodeSelector for pod assignment
                 type: object
               podSecurityContext:
                 description: |-
@@ -2834,6 +2990,27 @@ spec:
                         type: string
                     type: object
                 type: object
+              prometheus:
+                description: Prometheus specifies Prometheus metrics endpoint configuration
+                properties:
+                  address:
+                    default: 0.0.0.0
+                    description: Address is the listening address for metrics
+                    type: string
+                  enabled:
+                    default: false
+                    description: Enabled controls whether Prometheus metrics are exposed
+                    type: boolean
+                  port:
+                    default: 9090
+                    description: Port is the listening port for metrics
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                required:
+                - enabled
+                type: object
               replicas:
                 default: 1
                 description: |-
@@ -2975,12 +3152,16 @@ spec:
                 type: array
             required:
             - database
-            - lightning
             - mintInfo
+            - paymentBackend
             type: object
           status:
             description: CashuMintStatus defines the observed state of CashuMint
             properties:
+              backendType:
+                description: BackendType is the inferred payment backend type (lnd,
+                  cln, lnbits, fakewallet, grpcprocessor)
+                type: string
               conditions:
                 description: Conditions represent the latest available observations
                   of the mint's state
@@ -3063,12 +3244,17 @@ spec:
               ingressName:
                 description: IngressName is the name of the managed Ingress
                 type: string
-              lightningStatus:
-                description: LightningStatus represents the Lightning backend status
+              observedGeneration:
+                description: ObservedGeneration is the generation observed by the
+                  controller
+                format: int64
+                type: integer
+              paymentBackendStatus:
+                description: PaymentBackendStatus represents the payment backend status
                 properties:
                   connected:
-                    description: Connected indicates whether the Lightning backend
-                      is connected
+                    description: Connected indicates whether the payment backend is
+                      connected
                     type: boolean
                   lastChecked:
                     description: LastChecked is the timestamp of the last connectivity
@@ -3079,11 +3265,6 @@ spec:
                     description: Message provides additional information
                     type: string
                 type: object
-              observedGeneration:
-                description: ObservedGeneration is the generation observed by the
-                  controller
-                format: int64
-                type: integer
               phase:
                 description: Phase represents the current phase of the mint
                 enum:

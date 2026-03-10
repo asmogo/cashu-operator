@@ -28,13 +28,26 @@ const (
 	DatabaseEngineRedb     = "redb"
 )
 
-// Lightning backend values
+// DefaultListenHost is the default bind address used across the operator.
+const DefaultListenHost = "0.0.0.0"
+
+// Payment backend values
 const (
-	LightningBackendLND           = "lnd"
-	LightningBackendCLN           = "cln"
-	LightningBackendLNBits        = "lnbits"
-	LightningBackendFakeWallet    = "fakewallet"
-	LightningBackendGRPCProcessor = "grpcprocessor"
+	PaymentBackendLND           = "lnd"
+	PaymentBackendCLN           = "cln"
+	PaymentBackendLNBits        = "lnbits"
+	PaymentBackendFakeWallet    = "fakewallet"
+	PaymentBackendGRPCProcessor = "grpcprocessor"
+)
+
+// AuthLevel is the authentication level for an endpoint
+// +kubebuilder:validation:Enum=clear;blind;none
+type AuthLevel string
+
+const (
+	AuthLevelClear AuthLevel = "clear"
+	AuthLevelBlind AuthLevel = "blind"
+	AuthLevelNone  AuthLevel = "none"
 )
 
 // CashuMint is the Schema for the cashumints API
@@ -42,7 +55,7 @@ const (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=mint;mints
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.phase`
-// +kubebuilder:printcolumn:name="Backend",type=string,JSONPath=`.spec.lightning.backend`
+// +kubebuilder:printcolumn:name="Backend",type=string,JSONPath=`.status.backendType`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type CashuMint struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -83,14 +96,15 @@ type CashuMintSpec struct {
 	// Database specifies the database backend configuration
 	Database DatabaseConfig `json:"database"`
 
-	// Lightning specifies the Lightning Network backend configuration
-	Lightning LightningConfig `json:"lightning"`
+	// PaymentBackend specifies the payment backend configuration.
+	// Exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor).
+	PaymentBackend PaymentBackendConfig `json:"paymentBackend"`
 
 	// LDKNode specifies optional LDK node configuration
 	// +optional
 	LDKNode *LDKNodeConfig `json:"ldkNode,omitempty"`
 
-	// Auth specifies authentication configuration
+	// Auth specifies authentication configuration (NUT-21/NUT-22)
 	// +optional
 	Auth *AuthConfig `json:"auth,omitempty"`
 
@@ -101,6 +115,14 @@ type CashuMintSpec struct {
 	// ManagementRPC enables the management RPC interface
 	// +optional
 	ManagementRPC *ManagementRPCConfig `json:"managementRPC,omitempty"`
+
+	// Prometheus specifies Prometheus metrics endpoint configuration
+	// +optional
+	Prometheus *PrometheusConfig `json:"prometheus,omitempty"`
+
+	// Limits specifies transaction input/output limits for DoS protection
+	// +optional
+	Limits *LimitsConfig `json:"limits,omitempty"`
 
 	// Ingress specifies ingress configuration
 	// +optional
@@ -215,6 +237,30 @@ type MintInfo struct {
 	// EnableSwaggerUI enables the Swagger UI
 	// +optional
 	EnableSwaggerUI bool `json:"enableSwaggerUi,omitempty"`
+
+	// UseKeysetV2 controls keyset version preference.
+	// true = Force upgrade to V2 (Version01).
+	// false = Force downgrade to V1 (Version00).
+	// If unset (nil), existing keysets are preserved, but new ones use V2.
+	// +optional
+	UseKeysetV2 *bool `json:"useKeysetV2,omitempty"`
+
+	// QuoteTTL specifies time-to-live for mint and melt quotes
+	// +optional
+	QuoteTTL *QuoteTTLConfig `json:"quoteTtl,omitempty"`
+}
+
+// QuoteTTLConfig specifies time-to-live for quotes
+type QuoteTTLConfig struct {
+	// MintTTL is the time-to-live for mint quotes in seconds
+	// +kubebuilder:default=600
+	// +optional
+	MintTTL *int32 `json:"mintTtl,omitempty"`
+
+	// MeltTTL is the time-to-live for melt quotes in seconds
+	// +kubebuilder:default=120
+	// +optional
+	MeltTTL *int32 `json:"meltTtl,omitempty"`
 }
 
 // DatabaseConfig specifies database configuration
@@ -308,12 +354,9 @@ type AuthDatabaseConfig struct {
 	Postgres *PostgresConfig `json:"postgres,omitempty"`
 }
 
-// LightningConfig specifies Lightning Network backend configuration
-type LightningConfig struct {
-	// Backend specifies which Lightning backend to use
-	// +kubebuilder:validation:Enum=lnd;cln;lnbits;fakewallet;grpcprocessor
-	Backend string `json:"backend"`
-
+// PaymentBackendConfig specifies the payment backend configuration.
+// Exactly one backend must be specified.
+type PaymentBackendConfig struct {
 	// MinMint is the minimum amount for minting (in satoshis)
 	// +optional
 	MinMint *int64 `json:"minMint,omitempty"`
@@ -331,29 +374,55 @@ type LightningConfig struct {
 	MaxMelt *int64 `json:"maxMelt,omitempty"`
 
 	// LND specifies LND backend configuration
-	// Required when backend is "lnd"
 	// +optional
 	LND *LNDConfig `json:"lnd,omitempty"`
 
 	// CLN specifies Core Lightning backend configuration
-	// Required when backend is "cln"
 	// +optional
 	CLN *CLNConfig `json:"cln,omitempty"`
 
 	// LNBits specifies LNBits backend configuration
-	// Required when backend is "lnbits"
 	// +optional
 	LNBits *LNBitsConfig `json:"lnbits,omitempty"`
 
 	// FakeWallet specifies fake wallet configuration (for testing)
-	// Required when backend is "fakewallet"
 	// +optional
 	FakeWallet *FakeWalletConfig `json:"fakeWallet,omitempty"`
 
 	// GRPCProcessor specifies gRPC processor configuration
-	// Required when backend is "grpcprocessor"
 	// +optional
 	GRPCProcessor *GRPCProcessorConfig `json:"grpcProcessor,omitempty"`
+}
+
+// ActiveBackend returns the backend type string based on which field is populated.
+// Returns empty string if none or more than one is set.
+func (p *PaymentBackendConfig) ActiveBackend() string {
+	count := 0
+	result := ""
+	if p.LND != nil {
+		count++
+		result = PaymentBackendLND
+	}
+	if p.CLN != nil {
+		count++
+		result = PaymentBackendCLN
+	}
+	if p.LNBits != nil {
+		count++
+		result = PaymentBackendLNBits
+	}
+	if p.FakeWallet != nil {
+		count++
+		result = PaymentBackendFakeWallet
+	}
+	if p.GRPCProcessor != nil {
+		count++
+		result = PaymentBackendGRPCProcessor
+	}
+	if count != 1 {
+		return ""
+	}
+	return result
 }
 
 // LNDConfig specifies LND backend configuration
@@ -386,6 +455,10 @@ type CLNConfig struct {
 	// RPCPath is the path to the CLN RPC socket
 	RPCPath string `json:"rpcPath"`
 
+	// Bolt12 enables BOLT12 support
+	// +optional
+	Bolt12 *bool `json:"bolt12,omitempty"`
+
 	// FeePercent is the fee percentage
 	// +kubebuilder:default=0.04
 	// +optional
@@ -412,6 +485,14 @@ type LNBitsConfig struct {
 	// RetroAPI enables backward compatibility with LNBits v0 API
 	// +optional
 	RetroAPI bool `json:"retroApi,omitempty"`
+
+	// FeePercent is the fee percentage
+	// +optional
+	FeePercent *float64 `json:"feePercent,omitempty"`
+
+	// ReserveFeeMin is the minimum reserve fee
+	// +optional
+	ReserveFeeMin *int32 `json:"reserveFeeMin,omitempty"`
 }
 
 // FakeWalletConfig specifies fake wallet configuration for testing
@@ -561,6 +642,15 @@ type LDKNodeConfig struct {
 	// +optional
 	StorageDirPath string `json:"storageDirPath,omitempty"`
 
+	// LogDirPath is the directory path for LDK node logs
+	// +optional
+	LogDirPath string `json:"logDirPath,omitempty"`
+
+	// MnemonicSecretRef references a Secret containing the LDK node BIP39 mnemonic.
+	// Required for new nodes. For existing nodes, if omitted the node uses its stored seed.
+	// +optional
+	MnemonicSecretRef *corev1.SecretKeySelector `json:"mnemonicSecretRef,omitempty"`
+
 	// Host is the LDK node listening host
 	// +kubebuilder:default="0.0.0.0"
 	// +optional
@@ -613,7 +703,7 @@ type BitcoinRPCConfig struct {
 	PasswordSecretRef corev1.SecretKeySelector `json:"passwordSecretRef"`
 }
 
-// AuthConfig specifies authentication configuration
+// AuthConfig specifies authentication configuration (NUT-21/NUT-22)
 type AuthConfig struct {
 	// Enabled controls whether authentication is active
 	// +kubebuilder:default=false
@@ -632,35 +722,53 @@ type AuthConfig struct {
 	// +optional
 	MintMaxBat *int32 `json:"mintMaxBat,omitempty"`
 
-	// EnabledMint controls whether authenticated minting is enabled
-	// +kubebuilder:default=true
-	// +optional
-	EnabledMint *bool `json:"enabledMint,omitempty"`
+	// Per-endpoint authentication levels.
+	// Values: "clear" (NUT-21 clear auth), "blind" (NUT-22 blind auth), "none" (disabled).
 
-	// EnabledMelt controls whether authenticated melting is enabled
-	// +kubebuilder:default=true
+	// Mint is the auth level for the mint endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
 	// +optional
-	EnabledMelt *bool `json:"enabledMelt,omitempty"`
+	Mint AuthLevel `json:"mint,omitempty"`
 
-	// EnabledSwap controls whether authenticated swapping is enabled
-	// +kubebuilder:default=true
+	// GetMintQuote is the auth level for the get_mint_quote endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
 	// +optional
-	EnabledSwap *bool `json:"enabledSwap,omitempty"`
+	GetMintQuote AuthLevel `json:"getMintQuote,omitempty"`
 
-	// EnabledCheckMintQuote controls mint quote checking
-	// +kubebuilder:default=true
+	// CheckMintQuote is the auth level for the check_mint_quote endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
 	// +optional
-	EnabledCheckMintQuote *bool `json:"enabledCheckMintQuote,omitempty"`
+	CheckMintQuote AuthLevel `json:"checkMintQuote,omitempty"`
 
-	// EnabledCheckMeltQuote controls melt quote checking
-	// +kubebuilder:default=true
+	// Melt is the auth level for the melt endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
 	// +optional
-	EnabledCheckMeltQuote *bool `json:"enabledCheckMeltQuote,omitempty"`
+	Melt AuthLevel `json:"melt,omitempty"`
 
-	// EnabledRestore controls whether restore is enabled
-	// +kubebuilder:default=true
+	// GetMeltQuote is the auth level for the get_melt_quote endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
 	// +optional
-	EnabledRestore *bool `json:"enabledRestore,omitempty"`
+	GetMeltQuote AuthLevel `json:"getMeltQuote,omitempty"`
+
+	// CheckMeltQuote is the auth level for the check_melt_quote endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
+	// +optional
+	CheckMeltQuote AuthLevel `json:"checkMeltQuote,omitempty"`
+
+	// Swap is the auth level for the swap endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
+	// +optional
+	Swap AuthLevel `json:"swap,omitempty"`
+
+	// Restore is the auth level for the restore endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
+	// +optional
+	Restore AuthLevel `json:"restore,omitempty"`
+
+	// CheckProofState is the auth level for the check_proof_state endpoint
+	// +kubebuilder:validation:Enum=clear;blind;none
+	// +optional
+	CheckProofState AuthLevel `json:"checkProofState,omitempty"`
 
 	// Database specifies authentication database configuration
 	// +optional
@@ -720,6 +828,36 @@ type ManagementRPCConfig struct {
 	// +kubebuilder:default=8086
 	// +optional
 	Port int32 `json:"port,omitempty"`
+}
+
+// PrometheusConfig specifies Prometheus metrics endpoint configuration
+type PrometheusConfig struct {
+	// Enabled controls whether Prometheus metrics are exposed
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Address is the listening address for metrics
+	// +kubebuilder:default="0.0.0.0"
+	// +optional
+	Address string `json:"address,omitempty"`
+
+	// Port is the listening port for metrics
+	// +kubebuilder:default=9090
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port *int32 `json:"port,omitempty"`
+}
+
+// LimitsConfig specifies transaction input/output limits for DoS protection
+type LimitsConfig struct {
+	// MaxInputs is the maximum number of inputs allowed per transaction (swap/melt)
+	// +optional
+	MaxInputs *int32 `json:"maxInputs,omitempty"`
+
+	// MaxOutputs is the maximum number of outputs allowed per transaction (mint/swap/melt)
+	// +optional
+	MaxOutputs *int32 `json:"maxOutputs,omitempty"`
 }
 
 // IngressConfig specifies ingress configuration
@@ -796,11 +934,16 @@ type ServiceConfig struct {
 
 // LoggingConfig specifies logging configuration
 type LoggingConfig struct {
-	// Level is the log level
+	// Level is the console log level
 	// +kubebuilder:validation:Enum=trace;debug;info;warn;error
 	// +kubebuilder:default=info
 	// +optional
 	Level string `json:"level,omitempty"`
+
+	// FileLevel is the file log level (separate from console level)
+	// +kubebuilder:validation:Enum=trace;debug;info;warn;error
+	// +optional
+	FileLevel string `json:"fileLevel,omitempty"`
 
 	// Format is the log format
 	// +kubebuilder:validation:Enum=json;pretty
@@ -880,6 +1023,10 @@ type CashuMintStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// BackendType is the inferred payment backend type (lnd, cln, lnbits, fakewallet, grpcprocessor)
+	// +optional
+	BackendType string `json:"backendType,omitempty"`
+
 	// DeploymentName is the name of the managed Deployment
 	// +optional
 	DeploymentName string `json:"deploymentName,omitempty"`
@@ -900,9 +1047,9 @@ type CashuMintStatus struct {
 	// +optional
 	DatabaseStatus DatabaseStatus `json:"databaseStatus,omitempty"`
 
-	// LightningStatus represents the Lightning backend status
+	// PaymentBackendStatus represents the payment backend status
 	// +optional
-	LightningStatus LightningStatus `json:"lightningStatus,omitempty"`
+	PaymentBackendStatus PaymentBackendStatus `json:"paymentBackendStatus,omitempty"`
 
 	// URL is the actual URL where the mint is accessible
 	// +optional
@@ -940,9 +1087,9 @@ type DatabaseStatus struct {
 	LastChecked *metav1.Time `json:"lastChecked,omitempty"`
 }
 
-// LightningStatus represents Lightning backend status
-type LightningStatus struct {
-	// Connected indicates whether the Lightning backend is connected
+// PaymentBackendStatus represents payment backend status
+type PaymentBackendStatus struct {
+	// Connected indicates whether the payment backend is connected
 	// +optional
 	Connected bool `json:"connected,omitempty"`
 
@@ -963,8 +1110,8 @@ const (
 	// ConditionTypeDatabaseReady indicates the database is ready
 	ConditionTypeDatabaseReady = "DatabaseReady"
 
-	// ConditionTypeLightningReady indicates the Lightning backend is ready
-	ConditionTypeLightningReady = "LightningReady"
+	// ConditionTypePaymentBackendReady indicates the payment backend is ready
+	ConditionTypePaymentBackendReady = "PaymentBackendReady"
 
 	// ConditionTypeConfigValid indicates the configuration is valid
 	ConditionTypeConfigValid = "ConfigValid"

@@ -17,8 +17,7 @@ spec:
         key: DATABASE_URL
       maxConnections: 30
       connectionTimeoutSeconds: 15
-  lightning:
-    backend: fakewallet
+  paymentBackend:
     fakeWallet:
       supportedUnits:
         - sat

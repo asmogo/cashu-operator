@@ -18,8 +18,7 @@ spec:
       autoProvisionSpec:
         storageSize: 20Gi
         version: "16"
-  lightning:
-    backend: grpcprocessor
+  paymentBackend:
     grpcProcessor:
       supportedUnits:
         - usd

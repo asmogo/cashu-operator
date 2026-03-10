@@ -44,12 +44,12 @@ func (r *CashuMint) Default() {
 	r.defaultDatabase()
 	r.defaultIngress()
 	r.defaultOperational()
-	r.defaultLightning()
+	r.defaultPaymentBackend()
 }
 
 func (r *CashuMint) defaultMintInfo() {
 	if r.Spec.MintInfo.ListenHost == "" {
-		r.Spec.MintInfo.ListenHost = "0.0.0.0"
+		r.Spec.MintInfo.ListenHost = DefaultListenHost
 	}
 	if r.Spec.MintInfo.ListenPort == 0 {
 		r.Spec.MintInfo.ListenPort = 8085
@@ -60,6 +60,16 @@ func (r *CashuMint) defaultMintInfo() {
 	if r.Spec.Replicas == nil {
 		replicas := int32(1)
 		r.Spec.Replicas = &replicas
+	}
+	if r.Spec.MintInfo.QuoteTTL != nil {
+		if r.Spec.MintInfo.QuoteTTL.MintTTL == nil {
+			ttl := int32(600)
+			r.Spec.MintInfo.QuoteTTL.MintTTL = &ttl
+		}
+		if r.Spec.MintInfo.QuoteTTL.MeltTTL == nil {
+			ttl := int32(120)
+			r.Spec.MintInfo.QuoteTTL.MeltTTL = &ttl
+		}
 	}
 }
 
@@ -144,6 +154,9 @@ func (r *CashuMint) defaultOperational() {
 			r.Spec.ManagementRPC.Port = 8086
 		}
 	}
+	if r.Spec.Prometheus != nil && r.Spec.Prometheus.Enabled {
+		r.defaultPrometheus()
+	}
 	if r.Spec.Backup != nil && r.Spec.Backup.Enabled {
 		r.defaultBackup()
 	}
@@ -166,6 +179,16 @@ func (r *CashuMint) defaultHTTPCache() {
 	}
 }
 
+func (r *CashuMint) defaultPrometheus() {
+	if r.Spec.Prometheus.Address == "" {
+		r.Spec.Prometheus.Address = DefaultListenHost
+	}
+	if r.Spec.Prometheus.Port == nil {
+		port := int32(9090)
+		r.Spec.Prometheus.Port = &port
+	}
+}
+
 func (r *CashuMint) defaultBackup() {
 	if r.Spec.Backup.Schedule == "" {
 		r.Spec.Backup.Schedule = "0 */6 * * *"
@@ -180,56 +203,75 @@ func (r *CashuMint) defaultBackup() {
 }
 
 func (r *CashuMint) defaultAuth() {
-	boolTrue := true
 	if r.Spec.Auth.MintMaxBat == nil {
 		maxBat := int32(50)
 		r.Spec.Auth.MintMaxBat = &maxBat
 	}
-	if r.Spec.Auth.EnabledMint == nil {
-		r.Spec.Auth.EnabledMint = &boolTrue
+	defaultLevel := AuthLevelClear
+	if r.Spec.Auth.Mint == "" {
+		r.Spec.Auth.Mint = defaultLevel
 	}
-	if r.Spec.Auth.EnabledMelt == nil {
-		r.Spec.Auth.EnabledMelt = &boolTrue
+	if r.Spec.Auth.GetMintQuote == "" {
+		r.Spec.Auth.GetMintQuote = defaultLevel
 	}
-	if r.Spec.Auth.EnabledSwap == nil {
-		r.Spec.Auth.EnabledSwap = &boolTrue
+	if r.Spec.Auth.CheckMintQuote == "" {
+		r.Spec.Auth.CheckMintQuote = defaultLevel
 	}
-	if r.Spec.Auth.EnabledCheckMintQuote == nil {
-		r.Spec.Auth.EnabledCheckMintQuote = &boolTrue
+	if r.Spec.Auth.Melt == "" {
+		r.Spec.Auth.Melt = defaultLevel
 	}
-	if r.Spec.Auth.EnabledCheckMeltQuote == nil {
-		r.Spec.Auth.EnabledCheckMeltQuote = &boolTrue
+	if r.Spec.Auth.GetMeltQuote == "" {
+		r.Spec.Auth.GetMeltQuote = defaultLevel
 	}
-	if r.Spec.Auth.EnabledRestore == nil {
-		r.Spec.Auth.EnabledRestore = &boolTrue
+	if r.Spec.Auth.CheckMeltQuote == "" {
+		r.Spec.Auth.CheckMeltQuote = defaultLevel
+	}
+	if r.Spec.Auth.Swap == "" {
+		r.Spec.Auth.Swap = defaultLevel
+	}
+	if r.Spec.Auth.Restore == "" {
+		r.Spec.Auth.Restore = defaultLevel
+	}
+	if r.Spec.Auth.CheckProofState == "" {
+		r.Spec.Auth.CheckProofState = defaultLevel
 	}
 }
 
-func (r *CashuMint) defaultLightning() {
-	if r.Spec.Lightning.LND != nil {
-		if r.Spec.Lightning.LND.FeePercent == nil {
+func (r *CashuMint) defaultPaymentBackend() {
+	if r.Spec.PaymentBackend.LND != nil {
+		if r.Spec.PaymentBackend.LND.FeePercent == nil {
 			fee := 0.04
-			r.Spec.Lightning.LND.FeePercent = &fee
+			r.Spec.PaymentBackend.LND.FeePercent = &fee
 		}
-		if r.Spec.Lightning.LND.ReserveFeeMin == nil {
+		if r.Spec.PaymentBackend.LND.ReserveFeeMin == nil {
 			reserveFee := int32(4)
-			r.Spec.Lightning.LND.ReserveFeeMin = &reserveFee
+			r.Spec.PaymentBackend.LND.ReserveFeeMin = &reserveFee
 		}
 	}
-	if r.Spec.Lightning.CLN != nil {
-		if r.Spec.Lightning.CLN.FeePercent == nil {
+	if r.Spec.PaymentBackend.CLN != nil {
+		if r.Spec.PaymentBackend.CLN.FeePercent == nil {
 			fee := 0.04
-			r.Spec.Lightning.CLN.FeePercent = &fee
+			r.Spec.PaymentBackend.CLN.FeePercent = &fee
 		}
-		if r.Spec.Lightning.CLN.ReserveFeeMin == nil {
+		if r.Spec.PaymentBackend.CLN.ReserveFeeMin == nil {
 			reserveFee := int32(4)
-			r.Spec.Lightning.CLN.ReserveFeeMin = &reserveFee
+			r.Spec.PaymentBackend.CLN.ReserveFeeMin = &reserveFee
 		}
 	}
-	if r.Spec.Lightning.FakeWallet != nil {
+	if r.Spec.PaymentBackend.LNBits != nil {
+		if r.Spec.PaymentBackend.LNBits.FeePercent == nil {
+			fee := 0.02
+			r.Spec.PaymentBackend.LNBits.FeePercent = &fee
+		}
+		if r.Spec.PaymentBackend.LNBits.ReserveFeeMin == nil {
+			reserveFee := int32(2)
+			r.Spec.PaymentBackend.LNBits.ReserveFeeMin = &reserveFee
+		}
+	}
+	if r.Spec.PaymentBackend.FakeWallet != nil {
 		r.defaultFakeWallet()
 	}
-	if r.Spec.Lightning.GRPCProcessor != nil {
+	if r.Spec.PaymentBackend.GRPCProcessor != nil {
 		r.defaultGRPCProcessor()
 	}
 	if r.Spec.LDKNode != nil && r.Spec.LDKNode.Enabled {
@@ -238,7 +280,7 @@ func (r *CashuMint) defaultLightning() {
 }
 
 func (r *CashuMint) defaultFakeWallet() {
-	fw := r.Spec.Lightning.FakeWallet
+	fw := r.Spec.PaymentBackend.FakeWallet
 	if fw.FeePercent == nil {
 		fee := 0.02
 		fw.FeePercent = &fee
@@ -261,7 +303,7 @@ func (r *CashuMint) defaultFakeWallet() {
 }
 
 func (r *CashuMint) defaultGRPCProcessor() {
-	gp := r.Spec.Lightning.GRPCProcessor
+	gp := r.Spec.PaymentBackend.GRPCProcessor
 	if len(gp.SupportedUnits) == 0 {
 		gp.SupportedUnits = []string{"sat"}
 	}
@@ -292,7 +334,7 @@ func (r *CashuMint) defaultLDKNode() {
 		ldk.ChainSourceType = "esplora"
 	}
 	if ldk.Host == "" {
-		ldk.Host = "0.0.0.0"
+		ldk.Host = DefaultListenHost
 	}
 	if ldk.Port == 0 {
 		ldk.Port = 8090
@@ -346,8 +388,8 @@ func (r *CashuMint) validateCashuMint() error {
 		allErrs = append(allErrs, err)
 	}
 
-	// Validate Lightning configuration
-	if err := r.validateLightning(); err != nil {
+	// Validate PaymentBackend configuration
+	if err := r.validatePaymentBackend(); err != nil {
 		allErrs = append(allErrs, err)
 	}
 
@@ -450,68 +492,76 @@ func (r *CashuMint) validateDatabase() error {
 	return nil
 }
 
-// validateLightning validates the Lightning backend configuration
-func (r *CashuMint) validateLightning() error {
+// validatePaymentBackend validates the payment backend configuration
+func (r *CashuMint) validatePaymentBackend() error {
 	var errs []error
 
-	switch r.Spec.Lightning.Backend {
-	case LightningBackendLND:
-		if r.Spec.Lightning.LND == nil {
-			errs = append(errs, fmt.Errorf("spec.lightning.lnd is required when backend is lnd"))
-		} else {
-			if r.Spec.Lightning.LND.Address == "" {
-				errs = append(errs, fmt.Errorf("spec.lightning.lnd.address is required"))
-			}
-		}
-	case LightningBackendCLN:
-		if r.Spec.Lightning.CLN == nil {
-			errs = append(errs, fmt.Errorf("spec.lightning.cln is required when backend is cln"))
-		} else {
-			if r.Spec.Lightning.CLN.RPCPath == "" {
-				errs = append(errs, fmt.Errorf("spec.lightning.cln.rpcPath is required"))
-			}
-		}
-	case LightningBackendLNBits:
-		if r.Spec.Lightning.LNBits == nil {
-			errs = append(errs, fmt.Errorf("spec.lightning.lnbits is required when backend is lnbits"))
-		} else {
-			if r.Spec.Lightning.LNBits.API == "" {
-				errs = append(errs, fmt.Errorf("spec.lightning.lnbits.api is required"))
-			}
-		}
-	case LightningBackendFakeWallet:
-		if r.Spec.Lightning.FakeWallet == nil {
-			errs = append(errs, fmt.Errorf("spec.lightning.fakeWallet is required when backend is fakewallet"))
-		}
-	case LightningBackendGRPCProcessor:
-		if r.Spec.Lightning.GRPCProcessor == nil {
-			errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor is required when backend is grpcprocessor"))
-		} else {
-			// If a sidecar processor is enabled, address can be omitted (defaults to localhost)
-			sidecarEnabled := r.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
-				r.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled
+	pb := &r.Spec.PaymentBackend
 
-			if !sidecarEnabled && r.Spec.Lightning.GRPCProcessor.Address == "" {
-				errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.address is required when sidecarProcessor is not enabled"))
-			}
-
-			// Validate sidecar processor configuration if enabled
-			if sidecarEnabled {
-				sidecar := r.Spec.Lightning.GRPCProcessor.SidecarProcessor
-				if sidecar.Image == "" {
-					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.sidecarProcessor.image is required when enabled"))
-				}
-				if sidecar.EnableTLS && sidecar.TLSSecretRef == nil {
-					errs = append(errs, fmt.Errorf("spec.lightning.grpcProcessor.sidecarProcessor.tlsSecretRef is required when enableTLS is true"))
-				}
-			}
-		}
-	default:
-		errs = append(errs, fmt.Errorf("invalid lightning backend: %s (must be lnd, cln, lnbits, fakewallet, or grpcprocessor)", r.Spec.Lightning.Backend))
+	// Count how many backends are specified
+	count := 0
+	if pb.LND != nil {
+		count++
+	}
+	if pb.CLN != nil {
+		count++
+	}
+	if pb.LNBits != nil {
+		count++
+	}
+	if pb.FakeWallet != nil {
+		count++
+	}
+	if pb.GRPCProcessor != nil {
+		count++
 	}
 
+	if count == 0 {
+		errs = append(errs, fmt.Errorf("spec.paymentBackend: exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor)"))
+	}
+	if count > 1 {
+		errs = append(errs, fmt.Errorf("spec.paymentBackend: only one backend may be specified, but %d were found", count))
+	}
+
+	// Backend-specific validation
+	if pb.LND != nil {
+		if pb.LND.Address == "" {
+			errs = append(errs, fmt.Errorf("spec.paymentBackend.lnd.address is required"))
+		}
+	}
+	if pb.CLN != nil {
+		if pb.CLN.RPCPath == "" {
+			errs = append(errs, fmt.Errorf("spec.paymentBackend.cln.rpcPath is required"))
+		}
+	}
+	if pb.LNBits != nil {
+		if pb.LNBits.API == "" {
+			errs = append(errs, fmt.Errorf("spec.paymentBackend.lnbits.api is required"))
+		}
+	}
+	if pb.GRPCProcessor != nil {
+		sidecarEnabled := pb.GRPCProcessor.SidecarProcessor != nil &&
+			pb.GRPCProcessor.SidecarProcessor.Enabled
+
+		if !sidecarEnabled && pb.GRPCProcessor.Address == "" {
+			errs = append(errs, fmt.Errorf("spec.paymentBackend.grpcProcessor.address is required when sidecarProcessor is not enabled"))
+		}
+
+		if sidecarEnabled {
+			sidecar := pb.GRPCProcessor.SidecarProcessor
+			if sidecar.Image == "" {
+				errs = append(errs, fmt.Errorf("spec.paymentBackend.grpcProcessor.sidecarProcessor.image is required when enabled"))
+			}
+			if sidecar.EnableTLS && sidecar.TLSSecretRef == nil {
+				errs = append(errs, fmt.Errorf("spec.paymentBackend.grpcProcessor.sidecarProcessor.tlsSecretRef is required when enableTLS is true"))
+			}
+		}
+	}
+
+	// No specific required fields for FakeWallet
+
 	if len(errs) > 0 {
-		return fmt.Errorf("lightning validation errors: %v", errs)
+		return fmt.Errorf("payment backend validation errors: %v", errs)
 	}
 	return nil
 }

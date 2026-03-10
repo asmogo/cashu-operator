@@ -1,0 +1,88 @@
+---
+# This example deploys a CashuMint with auto-provisioned PostgreSQL
+# and scheduled pg_dump backups to S3-compatible object storage.
+#
+# Prerequisites:
+#   1. Create the mnemonic secret:
+#        kubectl create secret generic cashumint-backup-demo-secrets \
+#          --from-literal=mnemonic="<your 12/24-word mnemonic>"
+#
+#   2. Create the S3 credentials secret:
+#        kubectl create secret generic cashumint-backup-s3-creds \
+#          --from-literal=access-key-id="AKIAIOSFODNN7EXAMPLE" \
+#          --from-literal=secret-access-key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+#
+# How it works:
+#   - The operator creates a CronJob (<mint-name>-backup) that runs on the
+#     configured schedule (default: every 6 hours).
+#   - Each run executes pg_dump, gzip-compresses the output, and uploads
+#     the result to: s3://<bucket>/<prefix>/<mint-name>-<timestamp>.sql.gz
+#   - Job history is governed by retentionCount (successful + failed).
+#
+# Restoring from a backup:
+#   Annotate the CashuMint to trigger a one-shot restore Job:
+#     kubectl annotate cashumint cashumint-backup-demo \
+#       mint.cashu.asmogo.github.io/restore-object-key="backups/cashumint-backup-demo-20260306T120000Z.sql.gz"
+#   Optionally add a unique request ID to re-trigger the same key:
+#     kubectl annotate cashumint cashumint-backup-demo \
+#       mint.cashu.asmogo.github.io/restore-request-id="restore-2"
+
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-backup-demo
+spec:
+  image: cashubtc/mintd:0.15.0
+
+  mintInfo:
+    name: "Backup Demo Mint"
+    description: "CashuMint with S3 backup enabled"
+    url: "https://fake.dev.ucash.space"
+    mnemonicSecretRef:
+      name: cashumint-backup-demo-secrets
+      key: mnemonic
+
+  # --- Database: auto-provisioned PostgreSQL ---
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 10Gi
+        version: "16"
+
+  # --- Backup: pg_dump → S3 ---
+  backup:
+    enabled: true
+    schedule: "*/5 * * * *" # every 5 minutes
+    retentionCount: 14 # keep last 14 job runs
+    s3:
+      bucket: my-cashu-backups
+      prefix: backups # objects land at backups/<name>-<ts>.sql.gz
+      region: us-east-1
+      endpoint: https://s3.us-east-005.backblazeb2.com
+      # For S3-compatible providers (MinIO, Backblaze, etc.) set endpoint:
+      # endpoint: https://s3.us-east-005.backblazeb2.com
+      accessKeyIdSecretRef:
+        name: cashumint-backup-s3-creds
+        key: access-key-id
+      secretAccessKeySecretRef:
+        name: cashumint-backup-s3-creds
+        key: secret-access-key
+  ingress:
+    enabled: true
+    host: fake0.mint.dev.ucash.space
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt
+        issuerKind: ClusterIssuer
+  # --- Lightning: FakeWallet for demo purposes ---
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+
+  service:
+    type: ClusterIP

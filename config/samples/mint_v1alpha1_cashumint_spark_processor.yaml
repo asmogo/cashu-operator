@@ -35,9 +35,8 @@ spec:
             memory: "512Mi"
             cpu: "500m"
 
-  # Lightning backend configuration - gRPC processor with Spark
-  lightning:
-    backend: grpcprocessor
+  # Payment backend configuration - gRPC processor with Spark
+  paymentBackend:
     minMint: 100
     maxMint: 1000000
     minMelt: 100

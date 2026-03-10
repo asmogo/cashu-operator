@@ -91,11 +91,13 @@ func GenerateDeployment(mint *mintv1alpha1.CashuMint, configHash string, scheme 
 func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	containers := []corev1.Container{}
 
+	backend := mint.Spec.PaymentBackend.ActiveBackend()
+
 	// Add generic gRPC processor sidecar if enabled
-	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
-		mint.Spec.Lightning.GRPCProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled {
+	if backend == mintv1alpha1.PaymentBackendGRPCProcessor &&
+		mint.Spec.PaymentBackend.GRPCProcessor != nil &&
+		mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor != nil &&
+		mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor.Enabled {
 		containers = append(containers, generateSidecarProcessorContainer(mint))
 	}
 
@@ -134,20 +136,35 @@ func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 		listenPort = 8085
 	}
 
+	ports := []corev1.ContainerPort{
+		{
+			Name:          "api",
+			ContainerPort: listenPort,
+			Protocol:      corev1.ProtocolTCP,
+		},
+	}
+
+	// Add Prometheus metrics port if enabled
+	if mint.Spec.Prometheus != nil && mint.Spec.Prometheus.Enabled {
+		metricsPort := int32(9090)
+		if mint.Spec.Prometheus.Port != nil {
+			metricsPort = *mint.Spec.Prometheus.Port
+		}
+		ports = append(ports, corev1.ContainerPort{
+			Name:          "metrics",
+			ContainerPort: metricsPort,
+			Protocol:      corev1.ProtocolTCP,
+		})
+	}
+
 	container := corev1.Container{
 		Name:            "mintd",
 		Image:           image,
 		ImagePullPolicy: imagePullPolicy,
-		Ports: []corev1.ContainerPort{
-			{
-				Name:          "api",
-				ContainerPort: listenPort,
-				Protocol:      corev1.ProtocolTCP,
-			},
-		},
-		Env:          generateEnvironmentVariables(mint),
-		VolumeMounts: generateVolumeMounts(mint),
-		Resources:    getResourceRequirements(mint),
+		Ports:           ports,
+		Env:             generateEnvironmentVariables(mint),
+		VolumeMounts:    generateVolumeMounts(mint),
+		Resources:       getResourceRequirements(mint),
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
 				HTTPGet: &corev1.HTTPGetAction{
@@ -228,16 +245,16 @@ func generateLDKContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 }
 
 // generateSidecarProcessorContainer creates a generic gRPC payment processor sidecar container.
-// It supports any processor image configured via spec.lightning.grpcProcessor.sidecarProcessor.
+// It supports any processor image configured via spec.paymentBackend.grpcProcessor.sidecarProcessor.
 func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
-	sidecarConfig := mint.Spec.Lightning.GRPCProcessor.SidecarProcessor
+	sidecarConfig := mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor
 
 	imagePullPolicy := sidecarConfig.ImagePullPolicy
 	if imagePullPolicy == "" {
 		imagePullPolicy = corev1.PullIfNotPresent
 	}
 
-	port := mint.Spec.Lightning.GRPCProcessor.Port
+	port := mint.Spec.PaymentBackend.GRPCProcessor.Port
 	if port == 0 {
 		port = 50051
 	}
@@ -370,18 +387,20 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 		}
 	}
 
+	backend := mint.Spec.PaymentBackend.ActiveBackend()
+
 	// LNBits API keys from secrets
-	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLNBits && mint.Spec.Lightning.LNBits != nil {
+	if backend == mintv1alpha1.PaymentBackendLNBits && mint.Spec.PaymentBackend.LNBits != nil {
 		envVars = append(envVars, corev1.EnvVar{
 			Name: "LNBITS_ADMIN_API_KEY",
 			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &mint.Spec.Lightning.LNBits.AdminAPIKeySecretRef,
+				SecretKeyRef: &mint.Spec.PaymentBackend.LNBits.AdminAPIKeySecretRef,
 			},
 		})
 		envVars = append(envVars, corev1.EnvVar{
 			Name: "LNBITS_INVOICE_API_KEY",
 			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &mint.Spec.Lightning.LNBits.InvoiceAPIKeySecretRef,
+				SecretKeyRef: &mint.Spec.PaymentBackend.LNBits.InvoiceAPIKeySecretRef,
 			},
 		})
 	}
@@ -399,6 +418,17 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 			Name: "BITCOIN_RPC_PASSWORD",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &mint.Spec.LDKNode.BitcoinRPC.PasswordSecretRef,
+			},
+		})
+	}
+
+	// LDK node mnemonic from secret
+	if mint.Spec.LDKNode != nil && mint.Spec.LDKNode.Enabled &&
+		mint.Spec.LDKNode.MnemonicSecretRef != nil {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "CDK_LDK_NODE_MNEMONIC",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: mint.Spec.LDKNode.MnemonicSecretRef,
 			},
 		})
 	}
@@ -440,30 +470,32 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 		},
 	}
 
+	backend := mint.Spec.PaymentBackend.ActiveBackend()
+
 	// LND macaroon and cert
-	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLND && mint.Spec.Lightning.LND != nil {
-		if mint.Spec.Lightning.LND.MacaroonSecretRef != nil {
+	if backend == mintv1alpha1.PaymentBackendLND && mint.Spec.PaymentBackend.LND != nil {
+		if mint.Spec.PaymentBackend.LND.MacaroonSecretRef != nil {
 			mounts = append(mounts, corev1.VolumeMount{
 				Name:      "lnd-macaroon",
 				MountPath: "/secrets/lnd/macaroon",
-				SubPath:   mint.Spec.Lightning.LND.MacaroonSecretRef.Key,
+				SubPath:   mint.Spec.PaymentBackend.LND.MacaroonSecretRef.Key,
 				ReadOnly:  true,
 			})
 		}
-		if mint.Spec.Lightning.LND.CertSecretRef != nil {
+		if mint.Spec.PaymentBackend.LND.CertSecretRef != nil {
 			mounts = append(mounts, corev1.VolumeMount{
 				Name:      "lnd-cert",
 				MountPath: "/secrets/lnd/cert",
-				SubPath:   mint.Spec.Lightning.LND.CertSecretRef.Key,
+				SubPath:   mint.Spec.PaymentBackend.LND.CertSecretRef.Key,
 				ReadOnly:  true,
 			})
 		}
 	}
 
 	// gRPC processor TLS certificates
-	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
-		mint.Spec.Lightning.GRPCProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
+	if backend == mintv1alpha1.PaymentBackendGRPCProcessor &&
+		mint.Spec.PaymentBackend.GRPCProcessor != nil &&
+		mint.Spec.PaymentBackend.GRPCProcessor.TLSSecretRef != nil {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      "grpc-tls",
 			MountPath: "/secrets/grpc",
@@ -510,24 +542,26 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 		})
 	}
 
+	backend := mint.Spec.PaymentBackend.ActiveBackend()
+
 	// LND secret volumes
-	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendLND && mint.Spec.Lightning.LND != nil {
-		if mint.Spec.Lightning.LND.MacaroonSecretRef != nil {
+	if backend == mintv1alpha1.PaymentBackendLND && mint.Spec.PaymentBackend.LND != nil {
+		if mint.Spec.PaymentBackend.LND.MacaroonSecretRef != nil {
 			volumes = append(volumes, corev1.Volume{
 				Name: "lnd-macaroon",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: mint.Spec.Lightning.LND.MacaroonSecretRef.Name,
+						SecretName: mint.Spec.PaymentBackend.LND.MacaroonSecretRef.Name,
 					},
 				},
 			})
 		}
-		if mint.Spec.Lightning.LND.CertSecretRef != nil {
+		if mint.Spec.PaymentBackend.LND.CertSecretRef != nil {
 			volumes = append(volumes, corev1.Volume{
 				Name: "lnd-cert",
 				VolumeSource: corev1.VolumeSource{
 					Secret: &corev1.SecretVolumeSource{
-						SecretName: mint.Spec.Lightning.LND.CertSecretRef.Name,
+						SecretName: mint.Spec.PaymentBackend.LND.CertSecretRef.Name,
 					},
 				},
 			})
@@ -535,31 +569,31 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 	}
 
 	// gRPC processor TLS volume
-	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
-		mint.Spec.Lightning.GRPCProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.TLSSecretRef != nil {
+	if backend == mintv1alpha1.PaymentBackendGRPCProcessor &&
+		mint.Spec.PaymentBackend.GRPCProcessor != nil &&
+		mint.Spec.PaymentBackend.GRPCProcessor.TLSSecretRef != nil {
 		volumes = append(volumes, corev1.Volume{
 			Name: "grpc-tls",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: mint.Spec.Lightning.GRPCProcessor.TLSSecretRef.Name,
+					SecretName: mint.Spec.PaymentBackend.GRPCProcessor.TLSSecretRef.Name,
 				},
 			},
 		})
 	}
 
 	// Sidecar processor TLS volume
-	if mint.Spec.Lightning.Backend == mintv1alpha1.LightningBackendGRPCProcessor &&
-		mint.Spec.Lightning.GRPCProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor != nil &&
-		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.Enabled &&
-		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.EnableTLS &&
-		mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.TLSSecretRef != nil {
+	if backend == mintv1alpha1.PaymentBackendGRPCProcessor &&
+		mint.Spec.PaymentBackend.GRPCProcessor != nil &&
+		mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor != nil &&
+		mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor.Enabled &&
+		mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor.EnableTLS &&
+		mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor.TLSSecretRef != nil {
 		volumes = append(volumes, corev1.Volume{
 			Name: "sidecar-tls",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: mint.Spec.Lightning.GRPCProcessor.SidecarProcessor.TLSSecretRef.Name,
+					SecretName: mint.Spec.PaymentBackend.GRPCProcessor.SidecarProcessor.TLSSecretRef.Name,
 				},
 			},
 		})
