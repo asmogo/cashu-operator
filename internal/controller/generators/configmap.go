@@ -86,7 +86,7 @@ func writeInfoSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 
 	listenHost := mint.Spec.MintInfo.ListenHost
 	if listenHost == "" {
-		listenHost = "0.0.0.0"
+		listenHost = mintv1alpha1.DefaultListenHost
 	}
 	fmt.Fprintf(buf, "listen_host = %q\n", listenHost)
 
@@ -426,7 +426,7 @@ func writeLDKNodeSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	}
 	host := ldk.Host
 	if host == "" {
-		host = "0.0.0.0"
+		host = mintv1alpha1.DefaultListenHost
 	}
 	fmt.Fprintf(buf, "ldk_node_host = %q\n", host)
 	port := ldk.Port
@@ -537,7 +537,7 @@ func writePrometheusSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	buf.WriteString("enabled = true\n")
 	address := mint.Spec.Prometheus.Address
 	if address == "" {
-		address = "0.0.0.0"
+		address = mintv1alpha1.DefaultListenHost
 	}
 	fmt.Fprintf(buf, "address = %q\n", address)
 	if mint.Spec.Prometheus.Port != nil {

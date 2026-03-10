@@ -49,7 +49,7 @@ func (r *CashuMint) Default() {
 
 func (r *CashuMint) defaultMintInfo() {
 	if r.Spec.MintInfo.ListenHost == "" {
-		r.Spec.MintInfo.ListenHost = "0.0.0.0"
+		r.Spec.MintInfo.ListenHost = DefaultListenHost
 	}
 	if r.Spec.MintInfo.ListenPort == 0 {
 		r.Spec.MintInfo.ListenPort = 8085
@@ -181,7 +181,7 @@ func (r *CashuMint) defaultHTTPCache() {
 
 func (r *CashuMint) defaultPrometheus() {
 	if r.Spec.Prometheus.Address == "" {
-		r.Spec.Prometheus.Address = "0.0.0.0"
+		r.Spec.Prometheus.Address = DefaultListenHost
 	}
 	if r.Spec.Prometheus.Port == nil {
 		port := int32(9090)
@@ -334,7 +334,7 @@ func (r *CashuMint) defaultLDKNode() {
 		ldk.ChainSourceType = "esplora"
 	}
 	if ldk.Host == "" {
-		ldk.Host = "0.0.0.0"
+		ldk.Host = DefaultListenHost
 	}
 	if ldk.Port == 0 {
 		ldk.Port = 8090

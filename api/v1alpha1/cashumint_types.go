@@ -28,6 +28,9 @@ const (
 	DatabaseEngineRedb     = "redb"
 )
 
+// DefaultListenHost is the default bind address used across the operator.
+const DefaultListenHost = "0.0.0.0"
+
 // Payment backend values
 const (
 	PaymentBackendLND           = "lnd"
