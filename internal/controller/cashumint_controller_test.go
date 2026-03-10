@@ -77,8 +77,8 @@ var _ = Describe("CashuMint Controller", func() {
 								DataDir: "/data",
 							},
 						},
-						Lightning: mintv1alpha1.LightningConfig{
-							Backend: "fakewallet",
+						PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+							FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 						},
 					},
 				}
@@ -144,8 +144,8 @@ var _ = Describe("CashuMint Controller", func() {
 							},
 						},
 					},
-					Lightning: mintv1alpha1.LightningConfig{
-						Backend: "fakewallet",
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 					},
 				},
 			}
@@ -217,8 +217,8 @@ var _ = Describe("CashuMint Controller", func() {
 							AutoProvision: true,
 						},
 					},
-					Lightning: mintv1alpha1.LightningConfig{
-						Backend: "fakewallet",
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 					},
 				},
 			}
@@ -337,8 +337,8 @@ var _ = Describe("CashuMint Controller", func() {
 							},
 						},
 					},
-					Lightning: mintv1alpha1.LightningConfig{
-						Backend: "fakewallet",
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 					},
 				},
 			}
@@ -451,8 +451,8 @@ var _ = Describe("CashuMint Controller", func() {
 							},
 						},
 					},
-					Lightning: mintv1alpha1.LightningConfig{
-						Backend: "fakewallet",
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 					},
 				},
 			}
@@ -559,8 +559,8 @@ var _ = Describe("CashuMint Controller", func() {
 							},
 						},
 					},
-					Lightning: mintv1alpha1.LightningConfig{
-						Backend: "fakewallet",
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 					},
 				},
 			}
@@ -691,8 +691,8 @@ var _ = Describe("CashuMint Controller", func() {
 							},
 						},
 					},
-					Lightning: mintv1alpha1.LightningConfig{
-						Backend: "fakewallet",
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 					},
 				},
 			}
