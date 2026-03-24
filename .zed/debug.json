@@ -9,12 +9,12 @@
     "args": [
       "--health-probe-bind-address=:8081",
       "--metrics-bind-address=0",
-      "--leader-elect=false"
+      "--leader-elect=false",
     ],
     "env": {
       "KUBECONFIG": "/Users/ddcc/.kube/k8s-orb-dev-do-fra1-kubeconfig.yaml",
-      "ENABLE_WEBHOOKS": "false"
-    }
+      "ENABLE_WEBHOOKS": "false",
+    },
   },
   {
     "label": "Run cashu-operator (default kubeconfig)",
@@ -26,11 +26,11 @@
     "args": [
       "--health-probe-bind-address=:8081",
       "--metrics-bind-address=0",
-      "--leader-elect=false"
+      "--leader-elect=false",
     ],
     "env": {
-      "ENABLE_WEBHOOKS": "false"
-    }
+      "ENABLE_WEBHOOKS": "false",
+    },
   },
   {
     "label": "Run cashu-operator (build first)",
@@ -42,15 +42,22 @@
     "args": [
       "--health-probe-bind-address=:8081",
       "--metrics-bind-address=0",
-      "--leader-elect=false"
+      "--leader-elect=false",
     ],
     "env": {
       "KUBECONFIG": "/Users/ddcc/.kube/k8s-orb-dev-do-fra1-kubeconfig.yaml",
-      "ENABLE_WEBHOOKS": "false"
+      "ENABLE_WEBHOOKS": "false",
     },
     "build": {
       "command": "go",
-      "args": ["build", "-gcflags", "all=-N -l", "-o", "bin/manager", "./cmd/main.go"]
-    }
-  }
+      "args": [
+        "build",
+        "-gcflags",
+        "all=-N -l",
+        "-o",
+        "bin/manager",
+        "./cmd/main.go",
+      ],
+    },
+  },
 ]
