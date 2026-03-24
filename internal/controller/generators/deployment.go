@@ -499,6 +499,32 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 		})
 	}
 
+	// Management RPC env vars — CDK only enables the RPC server when
+	// CDK_MINTD_MINT_MANAGEMENT_ENABLED=true (the TOML enabled field alone
+	// is insufficient because from_env() re-initialises the struct from defaults
+	// before applying the file, leaving enabled=false unless the env var is set).
+	if mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.Enabled {
+		rpcPort := mint.Spec.ManagementRPC.Port
+		if rpcPort == 0 {
+			rpcPort = 8086
+		}
+		rpcAddress := mint.Spec.ManagementRPC.Address
+		if rpcAddress == "" {
+			rpcAddress = mintv1alpha1.DefaultLoopbackHost
+		}
+		envVars = append(envVars,
+			corev1.EnvVar{Name: "CDK_MINTD_MINT_MANAGEMENT_ENABLED", Value: "true"},
+			corev1.EnvVar{Name: "CDK_MINTD_MANAGEMENT_ADDRESS", Value: rpcAddress},
+			corev1.EnvVar{Name: "CDK_MINTD_MANAGEMENT_PORT", Value: fmt.Sprintf("%d", rpcPort)},
+		)
+		if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "CDK_MINTD_MANAGEMENT_TLS_DIR_PATH",
+				Value: orchardManagementRPCTLSMountPath,
+			})
+		}
+	}
+
 	// HTTP cache Redis connection string
 	if mint.Spec.HTTPCache != nil && mint.Spec.HTTPCache.Backend == "redis" &&
 		mint.Spec.HTTPCache.Redis != nil {

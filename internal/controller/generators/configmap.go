@@ -506,6 +506,7 @@ func writeManagementRPCSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 		return
 	}
 	buf.WriteString("\n[mint_management_rpc]\n")
+	buf.WriteString("enabled = true\n")
 	address := mint.Spec.ManagementRPC.Address
 	if address == "" {
 		address = mintv1alpha1.DefaultLoopbackHost
