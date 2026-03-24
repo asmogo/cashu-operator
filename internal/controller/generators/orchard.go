@@ -209,7 +209,7 @@ func generateOrchardEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.
 		}
 	}
 
-	if orchardMintRPCMTLS(mint) && mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.TLSSecretRef != nil {
+	if orchardMintRPCMTLS(mint) {
 		envVars = append(envVars,
 			corev1.EnvVar{Name: "MINT_RPC_KEY", Value: orchardManagementRPCTLSMountPath + "/client.key"},
 			corev1.EnvVar{Name: "MINT_RPC_CERT", Value: orchardManagementRPCTLSMountPath + "/client.pem"},
@@ -336,9 +336,9 @@ func generateOrchardVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMo
 		},
 	}
 
-	if orchardMintRPCMTLS(mint) && mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.TLSSecretRef != nil {
+	if orchardMintRPCMTLS(mint) {
 		mounts = append(mounts, corev1.VolumeMount{
-			Name:      "management-rpc-tls",
+			Name:      managementRPCTLSVolumeName,
 			MountPath: orchardManagementRPCTLSMountPath,
 			ReadOnly:  true,
 		})
@@ -719,7 +719,7 @@ func orchardMintRPCMTLS(mint *mintv1alpha1.CashuMint) bool {
 	if mint.Spec.Orchard != nil && mint.Spec.Orchard.Mint != nil && mint.Spec.Orchard.Mint.RPC != nil && mint.Spec.Orchard.Mint.RPC.MTLS != nil {
 		return *mint.Spec.Orchard.Mint.RPC.MTLS
 	}
-	return mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.TLSSecretRef != nil
+	return mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec)
 }
 
 func getOrchardResourceRequirements(mint *mintv1alpha1.CashuMint) corev1.ResourceRequirements {
@@ -743,7 +743,15 @@ func getOrchardContainerSecurityContext(mint *mintv1alpha1.CashuMint) *corev1.Se
 	if mint.Spec.Orchard != nil && mint.Spec.Orchard.ContainerSecurityContext != nil {
 		return mint.Spec.Orchard.ContainerSecurityContext
 	}
-	return getContainerSecurityContext(mint)
+	return &corev1.SecurityContext{
+		AllowPrivilegeEscalation: boolPtr(false),
+		ReadOnlyRootFilesystem:   boolPtr(false),
+		RunAsNonRoot:             boolPtr(false),
+		RunAsUser:                int64Ptr(0),
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+	}
 }
 
 func orchardSpecifiesMintDatabaseTLS(o *mintv1alpha1.OrchardConfig) bool {

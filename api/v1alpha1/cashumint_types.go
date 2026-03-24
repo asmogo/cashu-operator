@@ -46,6 +46,20 @@ func DefaultOrchardImage(databaseEngine string) string {
 	return DefaultOrchardSQLiteImage
 }
 
+func ManagementRPCTLSEnabled(spec *CashuMintSpec) bool {
+	if spec == nil || spec.ManagementRPC == nil || !spec.ManagementRPC.Enabled {
+		return false
+	}
+	return (spec.Orchard != nil && spec.Orchard.Enabled) || spec.ManagementRPC.TLSSecretRef != nil
+}
+
+func ManagementRPCTLSSecretName(spec *CashuMintSpec, mintName string) string {
+	if spec != nil && spec.ManagementRPC != nil && spec.ManagementRPC.TLSSecretRef != nil && spec.ManagementRPC.TLSSecretRef.Name != "" {
+		return spec.ManagementRPC.TLSSecretRef.Name
+	}
+	return mintName + "-management-rpc-tls"
+}
+
 // Payment backend values
 const (
 	PaymentBackendLND           = "lnd"
@@ -848,9 +862,10 @@ type ManagementRPCConfig struct {
 	// +optional
 	Port int32 `json:"port,omitempty"`
 
-	// TLSSecretRef references a Secret containing management RPC TLS materials.
-	// The Secret should provide at least ca.pem, server.pem, and server.key.
-	// To enable Orchard mTLS clients with the same Secret, also include client.pem and client.key.
+	// TLSSecretRef optionally names the Secret containing management RPC TLS materials.
+	// When management RPC TLS is needed and the named Secret does not exist, the operator generates
+	// one using this name. Generated/user-provided Secrets should provide at least ca.pem,
+	// server.pem, and server.key. Orchard mTLS clients also use client.pem and client.key.
 	// +optional
 	TLSSecretRef *corev1.LocalObjectReference `json:"tlsSecretRef,omitempty"`
 }
@@ -954,7 +969,9 @@ type OrchardConfig struct {
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 
-	// ContainerSecurityContext specifies the security context for the Orchard container
+	// ContainerSecurityContext specifies the security context for the Orchard container.
+	// When omitted, the operator uses a default compatible with Orchard's startup script,
+	// which writes a runtime config file into the image filesystem.
 	// +optional
 	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty"`
 
@@ -1008,7 +1025,8 @@ type OrchardMintRPCConfig struct {
 	// +optional
 	Port int32 `json:"port,omitempty"`
 
-	// MTLS enables mTLS for Orchard connections to the mint management RPC
+	// MTLS enables mTLS for Orchard connections to the mint management RPC.
+	// When omitted, the operator infers this from management RPC TLS configuration.
 	// +optional
 	MTLS *bool `json:"mTLS,omitempty"`
 }

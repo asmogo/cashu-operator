@@ -514,7 +514,7 @@ func writeManagementRPCSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 		port = 8086
 	}
 	fmt.Fprintf(buf, "port = %d\n", port)
-	if mint.Spec.ManagementRPC.TLSSecretRef != nil {
+	if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
 		fmt.Fprintf(buf, "tls_dir_path = %q\n", orchardManagementRPCTLSMountPath)
 	}
 }

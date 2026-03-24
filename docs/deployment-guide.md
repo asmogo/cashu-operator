@@ -224,8 +224,6 @@ spec:
       autoProvision: true
   managementRPC:
     enabled: true
-    tlsSecretRef:
-      name: cdk-mint-rpc-tls
   orchard:
     enabled: true
     setupKeySecretRef:
@@ -244,7 +242,7 @@ spec:
           issuerName: letsencrypt-prod
 ```
 
-When `spec.managementRPC.tlsSecretRef` is set, the referenced Secret should contain:
+When Orchard uses mTLS to the colocated management RPC, the operator ensures a TLS secret exists. By default it uses `<cashumint-name>-management-rpc-tls`; if you set `spec.managementRPC.tlsSecretRef.name`, that name is used instead.
 
 - `ca.pem`
 - `server.pem`
@@ -252,7 +250,7 @@ When `spec.managementRPC.tlsSecretRef` is set, the referenced Secret should cont
 - `client.pem`
 - `client.key`
 
-The mint uses the server-side files; Orchard uses the client-side files.
+The mint uses the server-side files; Orchard uses the client-side files. If the secret is absent, the operator generates it automatically.
 
 #### 2.4.3 Optional Orchard integrations
 

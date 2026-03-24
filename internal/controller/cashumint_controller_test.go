@@ -434,7 +434,6 @@ var _ = Describe("CashuMint Controller", func() {
 			}
 			Expect(k8sClient.Create(ctx, orchardSecret)).To(Succeed())
 
-			enableMTLS := true
 			resource := &mintv1alpha1.CashuMint{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      resourceName,
@@ -456,9 +455,6 @@ var _ = Describe("CashuMint Controller", func() {
 						Enabled: true,
 						Address: "127.0.0.1",
 						Port:    8086,
-						TLSSecretRef: &corev1.LocalObjectReference{
-							Name: "mint-rpc-tls",
-						},
 					},
 					Orchard: &mintv1alpha1.OrchardConfig{
 						Enabled:  true,
@@ -471,9 +467,7 @@ var _ = Describe("CashuMint Controller", func() {
 							Key:                  "setup-key",
 						},
 						Mint: &mintv1alpha1.OrchardMintConfig{
-							RPC: &mintv1alpha1.OrchardMintRPCConfig{
-								MTLS: &enableMTLS,
-							},
+							RPC: &mintv1alpha1.OrchardMintRPCConfig{},
 						},
 						Service: &mintv1alpha1.ServiceConfig{
 							Type: corev1.ServiceTypeClusterIP,
@@ -543,6 +537,11 @@ var _ = Describe("CashuMint Controller", func() {
 			Expect(mintContainer).NotTo(BeNil())
 			Expect(orchardContainer.Image).To(Equal(mintv1alpha1.DefaultOrchardImage(mintv1alpha1.DatabaseEngineSQLite)))
 			Expect(mintContainer.Image).To(Equal(mintv1alpha1.DefaultMintImage))
+			Expect(orchardContainer.SecurityContext).NotTo(BeNil())
+			Expect(orchardContainer.SecurityContext.RunAsNonRoot).NotTo(BeNil())
+			Expect(*orchardContainer.SecurityContext.RunAsNonRoot).To(BeFalse())
+			Expect(orchardContainer.SecurityContext.RunAsUser).NotTo(BeNil())
+			Expect(*orchardContainer.SecurityContext.RunAsUser).To(Equal(int64(0)))
 
 			envMap := map[string]corev1.EnvVar{}
 			for _, envVar := range orchardContainer.Env {
@@ -560,6 +559,24 @@ var _ = Describe("CashuMint Controller", func() {
 			Expect(envMap["SETUP_KEY"].ValueFrom.SecretKeyRef).NotTo(BeNil())
 			Expect(envMap["SETUP_KEY"].ValueFrom.SecretKeyRef.Name).To(Equal(orchardSecretName.Name))
 			Expect(envMap["SETUP_KEY"].ValueFrom.SecretKeyRef.Key).To(Equal("setup-key"))
+
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      resourceName + "-config",
+				Namespace: "default",
+			}, configMap)).To(Succeed())
+			Expect(configMap.Data["config.toml"]).To(ContainSubstring(`tls_dir_path = "/secrets/management-rpc-tls"`))
+
+			managementRPCSecret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      resourceName + "-management-rpc-tls",
+				Namespace: "default",
+			}, managementRPCSecret)).To(Succeed())
+			Expect(managementRPCSecret.Data).To(HaveKey("ca.pem"))
+			Expect(managementRPCSecret.Data).To(HaveKey("server.pem"))
+			Expect(managementRPCSecret.Data).To(HaveKey("server.key"))
+			Expect(managementRPCSecret.Data).To(HaveKey("client.pem"))
+			Expect(managementRPCSecret.Data).To(HaveKey("client.key"))
 
 			var orchardDataMount, orchardTmpMount, mintTLSMount bool
 			for _, mount := range orchardContainer.VolumeMounts {

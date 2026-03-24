@@ -256,6 +256,11 @@ func (r *CashuMintReconciler) reconcileOptionalBackup(ctx context.Context, cashu
 func (r *CashuMintReconciler) reconcileCoreResources(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
 
+	logger.Info("Reconciling management RPC TLS")
+	if err := r.reconcileManagementRPCTLSSecret(ctx, cashuMint); err != nil {
+		return fmt.Errorf("failed to reconcile management RPC TLS secret: %w", err)
+	}
+
 	logger.Info("Reconciling ConfigMap")
 	if err := r.reconcileConfigMap(ctx, cashuMint); err != nil {
 		return fmt.Errorf("failed to reconcile ConfigMap: %w", err)
@@ -278,6 +283,41 @@ func (r *CashuMintReconciler) reconcileCoreResources(ctx context.Context, cashuM
 		return fmt.Errorf("failed to reconcile Service: %w", err)
 	}
 
+	return nil
+}
+
+func (r *CashuMintReconciler) reconcileManagementRPCTLSSecret(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if !mintv1alpha1.ManagementRPCTLSEnabled(&cashuMint.Spec) {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+	secretName := mintv1alpha1.ManagementRPCTLSSecretName(&cashuMint.Spec, cashuMint.Name)
+	existingSecret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: cashuMint.Namespace,
+		Name:      secretName,
+	}, existingSecret)
+	if err == nil {
+		logger.Info("Management RPC TLS secret already exists", "secret", secretName)
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get management RPC TLS secret: %w", err)
+	}
+
+	secret, err := generators.GenerateManagementRPCTLSSecret(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate management RPC TLS secret: %w", err)
+	}
+	if secret == nil {
+		return nil
+	}
+	if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create management RPC TLS secret: %w", err)
+	}
+
+	logger.Info("Management RPC TLS secret created", "secret", secret.Name)
 	return nil
 }
 

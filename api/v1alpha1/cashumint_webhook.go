@@ -184,6 +184,9 @@ func (r *CashuMint) defaultOrchard() {
 	if orchard.Ingress != nil && orchard.Ingress.Enabled {
 		defaultIngressConfig(orchard.Ingress)
 	}
+	if r.Spec.ManagementRPC == nil {
+		r.Spec.ManagementRPC = &ManagementRPCConfig{Enabled: true}
+	}
 	if orchard.Mint == nil {
 		orchard.Mint = &OrchardMintConfig{}
 	}
@@ -198,7 +201,7 @@ func (r *CashuMint) defaultOrchard() {
 			orchard.Mint.RPC.Port = 8086
 		}
 		if orchard.Mint.RPC.MTLS == nil {
-			mtls := r.Spec.ManagementRPC != nil && r.Spec.ManagementRPC.TLSSecretRef != nil
+			mtls := ManagementRPCTLSEnabled(&r.Spec)
 			orchard.Mint.RPC.MTLS = &mtls
 		}
 	}
@@ -207,9 +210,6 @@ func (r *CashuMint) defaultOrchard() {
 	}
 	if orchard.TaprootAssets != nil && orchard.TaprootAssets.Type == "" {
 		orchard.TaprootAssets.Type = "tapd"
-	}
-	if r.Spec.ManagementRPC == nil {
-		r.Spec.ManagementRPC = &ManagementRPCConfig{Enabled: true}
 	}
 }
 
@@ -782,9 +782,6 @@ func (r *CashuMint) validateOrchardMint(orchard *OrchardConfig) []error {
 	if orchard.Mint.RPC != nil && orchard.Mint.RPC.MTLS != nil && *orchard.Mint.RPC.MTLS {
 		if r.Spec.ManagementRPC == nil || !r.Spec.ManagementRPC.Enabled {
 			errs = append(errs, fmt.Errorf("spec.orchard.mint.rpc.mTLS=true requires spec.managementRPC.enabled=true"))
-		}
-		if r.Spec.ManagementRPC == nil || r.Spec.ManagementRPC.TLSSecretRef == nil || r.Spec.ManagementRPC.TLSSecretRef.Name == "" {
-			errs = append(errs, fmt.Errorf("spec.orchard.mint.rpc.mTLS=true requires spec.managementRPC.tlsSecretRef"))
 		}
 	}
 	return errs

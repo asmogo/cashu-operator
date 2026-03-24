@@ -508,9 +508,9 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 		})
 	}
 
-	if mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.TLSSecretRef != nil {
+	if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
 		mounts = append(mounts, corev1.VolumeMount{
-			Name:      "management-rpc-tls",
+			Name:      managementRPCTLSVolumeName,
 			MountPath: orchardManagementRPCTLSMountPath,
 			ReadOnly:  true,
 		})
@@ -595,12 +595,12 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 		})
 	}
 
-	if mint.Spec.ManagementRPC != nil && mint.Spec.ManagementRPC.TLSSecretRef != nil {
+	if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
 		volumes = append(volumes, corev1.Volume{
-			Name: "management-rpc-tls",
+			Name: managementRPCTLSVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: mint.Spec.ManagementRPC.TLSSecretRef.Name,
+					SecretName: mintv1alpha1.ManagementRPCTLSSecretName(&mint.Spec, mint.Name),
 				},
 			},
 		})

@@ -237,7 +237,7 @@ spec:
 | `enabled`      | bool  | Yes      | `false`  | —     |
 | `address`      | string| No       | `127.0.0.1` | —  |
 | `port`         | int32 | No       | `8086`   | —     |
-| `tlsSecretRef` | `LocalObjectReference` | No | — | Secret containing management RPC TLS files (`ca.pem`, `server.pem`, `server.key`, optionally `client.pem`, `client.key`) |
+| `tlsSecretRef` | `LocalObjectReference` | No | `<cashumint-name>-management-rpc-tls` when TLS is needed | Optional secret name override for management RPC TLS. If the secret does not exist, the operator generates `ca.pem`, `server.pem`, `server.key`, `client.pem`, and `client.key`. |
 
 ### 2.9 Orchard (`spec.orchard`)
 
@@ -264,7 +264,7 @@ spec:
 | `ingress`                 | `IngressConfig`                | No       | disabled | Orchard-specific Ingress config |
 | `storage`                 | `StorageConfig`                | No       | `10Gi`  | Orchard application-state PVC sizing |
 | `resources`               | `ResourceRequirements`         | No       | CPU `100m-500m`, Mem `128Mi-512Mi` (implicit) | Orchard container resources |
-| `containerSecurityContext`| `SecurityContext`              | No       | inherits mint default | Orchard container security context |
+| `containerSecurityContext`| `SecurityContext`              | No       | Orchard-compatible default | Orchard container security context override |
 | `extraEnv`                | []`EnvVar`                     | No       | —       | Appended to generated Orchard env vars |
 
 #### OrchardMintConfig
@@ -285,7 +285,7 @@ spec:
 |----------|--------------|----------|---------|-------|
 | `host`   | string       | No       | `127.0.0.1` | Orchard talks to the colocated mint by default |
 | `port`   | int32        | No       | `8086`  | Mint management RPC port |
-| `mTLS`   | bool pointer | No       | inferred from `spec.managementRPC.tlsSecretRef` | Enables Orchard mTLS to the mint management RPC |
+| `mTLS`   | bool pointer | No       | inferred from management RPC TLS | Enables Orchard mTLS to the mint management RPC |
 
 #### OrchardBitcoinConfig
 

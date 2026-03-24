@@ -2090,9 +2090,10 @@ spec:
                     type: integer
                   tlsSecretRef:
                     description: |-
-                      TLSSecretRef references a Secret containing management RPC TLS materials.
-                      The Secret should provide at least ca.pem, server.pem, and server.key.
-                      To enable Orchard mTLS clients with the same Secret, also include client.pem and client.key.
+                      TLSSecretRef optionally names the Secret containing management RPC TLS materials.
+                      When management RPC TLS is needed and the named Secret does not exist, the operator generates
+                      one using this name. Generated/user-provided Secrets should provide at least ca.pem,
+                      server.pem, and server.key. Orchard mTLS clients also use client.pem and client.key.
                     properties:
                       name:
                         default: ""
@@ -2310,8 +2311,10 @@ spec:
                     description: Compression enables HTTP compression in Orchard
                     type: boolean
                   containerSecurityContext:
-                    description: ContainerSecurityContext specifies the security context
-                      for the Orchard container
+                    description: |-
+                      ContainerSecurityContext specifies the security context for the Orchard container.
+                      When omitted, the operator uses a default compatible with Orchard's startup script,
+                      which writes a runtime config file into the image filesystem.
                     properties:
                       allowPrivilegeEscalation:
                         description: |-
@@ -2968,8 +2971,9 @@ spec:
                             description: Host overrides the mint management RPC host
                             type: string
                           mTLS:
-                            description: MTLS enables mTLS for Orchard connections
-                              to the mint management RPC
+                            description: |-
+                              MTLS enables mTLS for Orchard connections to the mint management RPC.
+                              When omitted, the operator infers this from management RPC TLS configuration.
                             type: boolean
                           port:
                             description: Port overrides the mint management RPC port
