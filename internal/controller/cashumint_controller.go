@@ -183,6 +183,9 @@ func (r *CashuMintReconciler) handleDeletion(ctx context.Context, cashuMint *min
 func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) (ctrl.Result, error) {
 	r.transitionReconciliationPhase(cashuMint)
 
+	if err := r.reconcileOptionalMnemonic(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, err
+	}
 	if err := r.reconcileOptionalPostgreSQL(ctx, cashuMint); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -226,6 +229,40 @@ func (r *CashuMintReconciler) transitionReconciliationPhase(cashuMint *mintv1alp
 		})
 		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Updating", "Spec changed, updating resources")
 	}
+}
+
+// reconcileOptionalMnemonic ensures a BIP39 mnemonic Secret exists when
+// spec.mintInfo.autoGenerateMnemonic is true and no mnemonicSecretRef is set.
+// The secret is created once and never overwritten so the mint key is stable.
+func (r *CashuMintReconciler) reconcileOptionalMnemonic(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if !cashuMint.Spec.MintInfo.AutoGenerateMnemonic || cashuMint.Spec.MintInfo.MnemonicSecretRef != nil {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+	secretName := generators.MnemonicSecretName(cashuMint.Name)
+
+	existingSecret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: cashuMint.Namespace, Name: secretName}, existingSecret)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get mnemonic secret: %w", err)
+	}
+
+	if apierrors.IsNotFound(err) {
+		secret, genErr := generators.GenerateMnemonicSecret(cashuMint, r.Scheme, "")
+		if genErr != nil {
+			return fmt.Errorf("failed to generate mnemonic secret: %w", genErr)
+		}
+		if createErr := r.Create(ctx, secret); createErr != nil && !apierrors.IsAlreadyExists(createErr) {
+			return fmt.Errorf("failed to create mnemonic secret: %w", createErr)
+		}
+		logger.Info("Mnemonic secret created", "secret", secret.Name)
+		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "MnemonicCreated", "Auto-generated BIP39 mnemonic secret created")
+	} else {
+		logger.Info("Mnemonic secret already exists, keeping existing mnemonic", "secret", secretName)
+	}
+
+	return nil
 }
 
 func (r *CashuMintReconciler) reconcileOptionalPostgreSQL(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {

@@ -202,13 +202,15 @@ func writeDatabaseSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint, dbPas
 		} else if pg.URL != "" {
 			fmt.Fprintf(buf, "url = %q\n", pg.URL)
 		}
+		// Auto-provisioned postgres runs inside the cluster without TLS.
+		// Force disable regardless of the field value (the kubebuilder default
+		// of "require" is applied by the API server and would otherwise break
+		// connections to the internal StatefulSet).
 		tlsMode := pg.TLSMode
-		if tlsMode == "" {
-			if pg.AutoProvision {
-				tlsMode = "disable"
-			} else {
-				tlsMode = "require"
-			}
+		if pg.AutoProvision {
+			tlsMode = "disable"
+		} else if tlsMode == "" {
+			tlsMode = "require"
 		}
 		fmt.Fprintf(buf, "tls_mode = %q\n", tlsMode)
 		if pg.MaxConnections != nil {

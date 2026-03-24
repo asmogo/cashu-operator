@@ -1,0 +1,56 @@
+[
+  {
+    "label": "Run cashu-operator (local kubeconfig)",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "debug",
+    "program": "./cmd/main.go",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [
+      "--health-probe-bind-address=:8081",
+      "--metrics-bind-address=0",
+      "--leader-elect=false"
+    ],
+    "env": {
+      "KUBECONFIG": "/Users/ddcc/.kube/k8s-orb-dev-do-fra1-kubeconfig.yaml",
+      "ENABLE_WEBHOOKS": "false"
+    }
+  },
+  {
+    "label": "Run cashu-operator (default kubeconfig)",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "debug",
+    "program": "./cmd/main.go",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [
+      "--health-probe-bind-address=:8081",
+      "--metrics-bind-address=0",
+      "--leader-elect=false"
+    ],
+    "env": {
+      "ENABLE_WEBHOOKS": "false"
+    }
+  },
+  {
+    "label": "Run cashu-operator (build first)",
+    "adapter": "Delve",
+    "request": "launch",
+    "mode": "exec",
+    "program": "$ZED_WORKTREE_ROOT/bin/manager",
+    "cwd": "$ZED_WORKTREE_ROOT",
+    "args": [
+      "--health-probe-bind-address=:8081",
+      "--metrics-bind-address=0",
+      "--leader-elect=false"
+    ],
+    "env": {
+      "KUBECONFIG": "/Users/ddcc/.kube/k8s-orb-dev-do-fra1-kubeconfig.yaml",
+      "ENABLE_WEBHOOKS": "false"
+    },
+    "build": {
+      "command": "go",
+      "args": ["build", "-gcflags", "all=-N -l", "-o", "bin/manager", "./cmd/main.go"]
+    }
+  }
+]

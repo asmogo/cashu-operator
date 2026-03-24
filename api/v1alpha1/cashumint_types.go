@@ -222,10 +222,19 @@ type MintInfo struct {
 	// +optional
 	ListenPort int32 `json:"listenPort,omitempty"`
 
-	// MnemonicSecretRef references a Secret containing the mnemonic
-	// Required for production, should never be in plain text
+	// MnemonicSecretRef references a Secret containing the mnemonic.
+	// Required for production unless AutoGenerateMnemonic is true.
+	// Should never be stored in plain text.
 	// +optional
 	MnemonicSecretRef *corev1.SecretKeySelector `json:"mnemonicSecretRef,omitempty"`
+
+	// AutoGenerateMnemonic instructs the operator to generate and manage a BIP39
+	// mnemonic Secret for the mint. When true and MnemonicSecretRef is not set,
+	// the operator creates a Secret named "<mint-name>-mnemonic" containing a
+	// randomly generated 24-word mnemonic under the key "mnemonic". The Secret
+	// is owned by the CashuMint and deleted when the CR is deleted.
+	// +optional
+	AutoGenerateMnemonic bool `json:"autoGenerateMnemonic,omitempty"`
 
 	// Name is the display name of the mint
 	// +optional

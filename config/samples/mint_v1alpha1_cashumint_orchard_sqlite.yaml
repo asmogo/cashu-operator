@@ -32,6 +32,9 @@ spec:
       host: orchard-sqlite.example.com
     ai:
       api: http://ollama.default.svc.cluster.local:11434
+  ingress:
+    enabled: true
+    host: orchard-sqlite.example.com
   paymentBackend:
     fakeWallet:
       supportedUnits:

@@ -314,18 +314,63 @@ func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Cont
 
 // generateEnvironmentVariables creates environment variables for the mint container
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	backend := mint.Spec.PaymentBackend.ActiveBackend()
+
+	listenHost := mint.Spec.MintInfo.ListenHost
+	if listenHost == "" {
+		listenHost = mintv1alpha1.DefaultListenHost
+	}
+	listenPort := mint.Spec.MintInfo.ListenPort
+	if listenPort == 0 {
+		listenPort = 8085
+	}
+
+	// cdk-mintd >= 0.15.0 reads critical settings exclusively from env vars when
+	// Settings::from_env() is called after config file parsing. We set all the
+	// non-secret fields as env vars so the mint starts correctly even if config
+	// file parsing fails silently.
 	envVars := []corev1.EnvVar{
 		{
-			// CDK_MINTD_WORK_DIR tells cdk-mintd where its work directory is.
-			// The binary looks for config.toml at $CDK_MINTD_WORK_DIR/config.toml,
-			// and stores SQLite DB, logs, and TLS material under this path.
-			// We mount config.toml into /data/config.toml and use /data as work dir.
+			// CDK_MINTD_WORK_DIR: work directory — binary looks for config.toml here
+			// and stores SQLite DB, logs, TLS material under this path.
 			Name:  "CDK_MINTD_WORK_DIR",
 			Value: "/data",
 		},
 		{
 			Name:  "HOME",
 			Value: "/data",
+		},
+		{
+			// CDK_MINTD_LN_BACKEND: canonical backend selector in 0.15.0+
+			Name:  "CDK_MINTD_LN_BACKEND",
+			Value: backend,
+		},
+		{
+			// CDK_MINTD_URL: public mint URL
+			Name:  "CDK_MINTD_URL",
+			Value: mint.Spec.MintInfo.URL,
+		},
+		{
+			// CDK_MINTD_LISTEN_HOST: bind address for the HTTP server
+			Name:  "CDK_MINTD_LISTEN_HOST",
+			Value: listenHost,
+		},
+		{
+			// CDK_MINTD_LISTEN_PORT: bind port for the HTTP server
+			Name:  "CDK_MINTD_LISTEN_PORT",
+			Value: fmt.Sprintf("%d", listenPort),
+		},
+		{
+			// CDK_MINTD_DATABASE: database engine ("sqlite" or "postgres")
+			Name:  "CDK_MINTD_DATABASE",
+			Value: mint.Spec.Database.Engine,
+		},
+		{
+			// CDK_MINTD_LOGGING_OUTPUT=stderr activates the tracing subscriber
+			// without needing to pass --enable-logging as a CLI arg (which would
+			// override the container entrypoint).
+			Name:  "CDK_MINTD_LOGGING_OUTPUT",
+			Value: "stderr",
 		},
 	}
 
@@ -337,43 +382,61 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 				Value: mint.Spec.Logging.Level,
 			})
 			envVars = append(envVars, corev1.EnvVar{
-				Name:  "LOG_LEVEL",
+				Name:  "CDK_MINTD_LOGGING_CONSOLE_LEVEL",
 				Value: mint.Spec.Logging.Level,
 			})
 		}
-		if mint.Spec.Logging.Format != "" {
+		if mint.Spec.Logging.FileLevel != "" {
 			envVars = append(envVars, corev1.EnvVar{
-				Name:  "LOG_FORMAT",
-				Value: mint.Spec.Logging.Format,
+				Name:  "CDK_MINTD_LOGGING_FILE_LEVEL",
+				Value: mint.Spec.Logging.FileLevel,
 			})
 		}
 	}
 
-	// Mnemonic from secret
-	if mint.Spec.MintInfo.MnemonicSecretRef != nil {
+	// Mnemonic from secret — either user-provided ref or auto-generated secret.
+	mnemonicRef := mint.Spec.MintInfo.MnemonicSecretRef
+	if mnemonicRef == nil && mint.Spec.MintInfo.AutoGenerateMnemonic {
+		mnemonicRef = &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: MnemonicSecretName(mint.Name)},
+			Key:                  MnemonicSecretKey,
+		}
+	}
+	if mnemonicRef != nil {
 		envVars = append(envVars, corev1.EnvVar{
 			Name: "CDK_MINTD_MNEMONIC",
 			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: mint.Spec.MintInfo.MnemonicSecretRef,
+				SecretKeyRef: mnemonicRef,
 			},
 		})
 	}
 
-	// Database configuration
-	// Note: For auto-provisioned postgres, the URL with password is written directly into the config file.
-	// For external postgres with URLSecretRef, we still inject via environment variable.
+	// Database URL — injected for auto-provisioned postgres via the operator-managed
+	// secret, and for external postgres via user-supplied secret or plain URL.
 	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres && mint.Spec.Database.Postgres != nil {
-		if mint.Spec.Database.Postgres.URLSecretRef != nil {
+		if mint.Spec.Database.Postgres.AutoProvision {
+			// Auto-provisioned: read database-url key from the operator-managed secret
 			envVars = append(envVars, corev1.EnvVar{
-				Name: "CDK_MINTD_DATABASE_URL",
+				Name: "CDK_MINTD_POSTGRES_URL",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: mint.Name + "-postgres-secret",
+						},
+						Key: "database-url",
+					},
+				},
+			})
+		} else if mint.Spec.Database.Postgres.URLSecretRef != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "CDK_MINTD_POSTGRES_URL",
 				ValueFrom: &corev1.EnvVarSource{
 					SecretKeyRef: mint.Spec.Database.Postgres.URLSecretRef,
 				},
 			})
 		} else if mint.Spec.Database.Postgres.URL != "" {
-			// Direct URL (not recommended for production)
 			envVars = append(envVars, corev1.EnvVar{
-				Name:  "CDK_MINTD_DATABASE_URL",
+				Name:  "CDK_MINTD_POSTGRES_URL",
 				Value: mint.Spec.Database.Postgres.URL,
 			})
 		}
@@ -391,8 +454,6 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 			})
 		}
 	}
-
-	backend := mint.Spec.PaymentBackend.ActiveBackend()
 
 	// LNBits API keys from secrets
 	if backend == mintv1alpha1.PaymentBackendLNBits && mint.Spec.PaymentBackend.LNBits != nil {
@@ -461,17 +522,21 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 
 // generateVolumeMounts creates volume mounts for the mint container
 func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
+	// IMPORTANT: "data" must be mounted before "config" so that the subPath
+	// config.toml bind-mount is applied into the already-present /data directory.
+	// If "config" came first, the subsequent emptyDir/PVC mount of /data would
+	// shadow the subPath file and CDK would start with no config.toml.
 	mounts := []corev1.VolumeMount{
+		{
+			Name:      "data",
+			MountPath: "/data",
+		},
 		{
 			// Mount config.toml into the work dir so CDK finds it at $CDK_MINTD_WORK_DIR/config.toml
 			Name:      "config",
 			MountPath: "/data/config.toml",
 			SubPath:   "config.toml",
 			ReadOnly:  true,
-		},
-		{
-			Name:      "data",
-			MountPath: "/data",
 		},
 	}
 
