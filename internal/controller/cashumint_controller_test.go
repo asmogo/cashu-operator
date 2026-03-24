@@ -718,7 +718,7 @@ var _ = Describe("CashuMint Controller", func() {
 			var dbEnv *corev1.EnvVar
 			for i := range deployment.Spec.Template.Spec.Containers[0].Env {
 				envVar := &deployment.Spec.Template.Spec.Containers[0].Env[i]
-				if envVar.Name == "CDK_MINTD_DATABASE_URL" {
+				if envVar.Name == "CDK_MINTD_POSTGRES_URL" {
 					dbEnv = envVar
 					break
 				}
