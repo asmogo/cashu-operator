@@ -50,7 +50,7 @@ var _ = Describe("Helper Functions", func() {
 			h1 := calculateConfigHash(cm)
 			h2 := calculateConfigHash(cm)
 			Expect(h1).To(Equal(h2))
-			Expect(len(h1)).To(Equal(64)) // SHA256 hex = 64 chars
+			Expect(h1).To(HaveLen(64)) // SHA256 hex = 64 chars
 		})
 
 		It("should produce different hashes for different configs", func() {

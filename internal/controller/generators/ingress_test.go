@@ -24,6 +24,11 @@ import (
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 )
 
+const (
+	testHost      = "mint.example.com"
+	clusterIssuer = "ClusterIssuer"
+)
+
 func TestGenerateIngress_Disabled(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("no-ingress")
@@ -56,7 +61,7 @@ func TestGenerateIngress_Basic(t *testing.T) {
 	mint := baseMint("basic-ingress")
 	mint.Spec.Ingress = &mintv1alpha1.IngressConfig{
 		Enabled: true,
-		Host:    "mint.example.com",
+		Host:    testHost,
 	}
 
 	ingress, err := GenerateIngress(mint, scheme)
@@ -75,8 +80,8 @@ func TestGenerateIngress_Basic(t *testing.T) {
 	if len(ingress.Spec.Rules) != 1 {
 		t.Fatalf("rules count = %d, want 1", len(ingress.Spec.Rules))
 	}
-	if ingress.Spec.Rules[0].Host != "mint.example.com" {
-		t.Errorf("host = %q, want %q", ingress.Spec.Rules[0].Host, "mint.example.com")
+	if ingress.Spec.Rules[0].Host != testHost {
+		t.Errorf("host = %q, want %q", ingress.Spec.Rules[0].Host, testHost)
 	}
 	// Default annotations
 	if ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] != "true" {
@@ -89,7 +94,7 @@ func TestGenerateIngress_CustomClassName(t *testing.T) {
 	mint := baseMint("custom-class")
 	mint.Spec.Ingress = &mintv1alpha1.IngressConfig{
 		Enabled:   true,
-		Host:      "mint.example.com",
+		Host:      testHost,
 		ClassName: "traefik",
 	}
 
@@ -104,7 +109,7 @@ func TestGenerateIngress_TLSEnabled(t *testing.T) {
 	mint := baseMint("tls-ingress")
 	mint.Spec.Ingress = &mintv1alpha1.IngressConfig{
 		Enabled: true,
-		Host:    "mint.example.com",
+		Host:    testHost,
 		TLS: &mintv1alpha1.IngressTLSConfig{
 			Enabled:    true,
 			SecretName: "my-tls-secret",
@@ -118,7 +123,7 @@ func TestGenerateIngress_TLSEnabled(t *testing.T) {
 	if ingress.Spec.TLS[0].SecretName != "my-tls-secret" {
 		t.Errorf("TLS secret = %q, want %q", ingress.Spec.TLS[0].SecretName, "my-tls-secret")
 	}
-	if len(ingress.Spec.TLS[0].Hosts) != 1 || ingress.Spec.TLS[0].Hosts[0] != "mint.example.com" {
+	if len(ingress.Spec.TLS[0].Hosts) != 1 || ingress.Spec.TLS[0].Hosts[0] != testHost {
 		t.Errorf("TLS hosts = %v, want [mint.example.com]", ingress.Spec.TLS[0].Hosts)
 	}
 }
@@ -128,7 +133,7 @@ func TestGenerateIngress_TLSDefaultSecretName(t *testing.T) {
 	mint := baseMint("auto-tls")
 	mint.Spec.Ingress = &mintv1alpha1.IngressConfig{
 		Enabled: true,
-		Host:    "mint.example.com",
+		Host:    testHost,
 		TLS:     &mintv1alpha1.IngressTLSConfig{Enabled: true},
 	}
 
@@ -143,13 +148,13 @@ func TestGenerateIngress_CertManagerAnnotations(t *testing.T) {
 	mint := baseMint("certmgr-ing")
 	mint.Spec.Ingress = &mintv1alpha1.IngressConfig{
 		Enabled: true,
-		Host:    "mint.example.com",
+		Host:    testHost,
 		TLS: &mintv1alpha1.IngressTLSConfig{
 			Enabled: true,
 			CertManager: &mintv1alpha1.CertManagerConfig{
 				Enabled:    true,
 				IssuerName: "letsencrypt-prod",
-				IssuerKind: "ClusterIssuer",
+				IssuerKind: clusterIssuer,
 			},
 		},
 	}
@@ -158,7 +163,7 @@ func TestGenerateIngress_CertManagerAnnotations(t *testing.T) {
 	if ingress.Annotations["cert-manager.io/issuer"] != "letsencrypt-prod" {
 		t.Errorf("cert-manager issuer annotation missing")
 	}
-	if ingress.Annotations["cert-manager.io/issuer-kind"] != "ClusterIssuer" {
+	if ingress.Annotations["cert-manager.io/issuer-kind"] != clusterIssuer {
 		t.Errorf("cert-manager issuer-kind annotation missing")
 	}
 }
@@ -173,7 +178,7 @@ func TestGenerateIngress_CustomAnnotationsOverride(t *testing.T) {
 			PaymentBackend: mintv1alpha1.PaymentBackendConfig{FakeWallet: &mintv1alpha1.FakeWalletConfig{}},
 			Ingress: &mintv1alpha1.IngressConfig{
 				Enabled: true,
-				Host:    "mint.example.com",
+				Host:    testHost,
 				Annotations: map[string]string{
 					"nginx.ingress.kubernetes.io/ssl-redirect": "false",
 					"custom-key": "custom-value",
@@ -196,7 +201,7 @@ func TestGenerateIngress_CustomPort(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("port-ingress")
 	mint.Spec.MintInfo.ListenPort = 9999
-	mint.Spec.Ingress = &mintv1alpha1.IngressConfig{Enabled: true, Host: "mint.example.com"}
+	mint.Spec.Ingress = &mintv1alpha1.IngressConfig{Enabled: true, Host: testHost}
 
 	ingress, _ := GenerateIngress(mint, scheme)
 	backend := ingress.Spec.Rules[0].HTTP.Paths[0].Backend.Service

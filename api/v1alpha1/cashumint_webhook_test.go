@@ -24,8 +24,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func int32Ptr(i int32) *int32       { return &i }
-func float64Ptr(f float64) *float64 { return &f }
+const (
+	defaultStorageSize = "10Gi"
+	localhostIP        = "127.0.0.1"
+)
 
 func validMint() *CashuMint {
 	return &CashuMint{
@@ -80,7 +82,7 @@ func TestDefault_Database(t *testing.T) {
 		m.Spec.Database.Postgres.AutoProvision = true
 		m.Spec.Database.Postgres.AutoProvisionSpec = &PostgresAutoProvisionSpec{}
 		m.Default()
-		if m.Spec.Database.Postgres.AutoProvisionSpec.StorageSize != "10Gi" {
+		if m.Spec.Database.Postgres.AutoProvisionSpec.StorageSize != defaultStorageSize {
 			t.Error("storageSize should default to 10Gi")
 		}
 		if m.Spec.Database.Postgres.AutoProvisionSpec.Version != "15" {
@@ -265,8 +267,8 @@ func TestDefault_ManagementRPC(t *testing.T) {
 	m := validMint()
 	m.Spec.ManagementRPC = &ManagementRPCConfig{Enabled: true}
 	m.Default()
-	if m.Spec.ManagementRPC.Address != "127.0.0.1" {
-		t.Errorf("address = %q, want 127.0.0.1", m.Spec.ManagementRPC.Address)
+	if m.Spec.ManagementRPC.Address != localhostIP {
+		t.Errorf("address = %q, want %q", m.Spec.ManagementRPC.Address, localhostIP)
 	}
 	if m.Spec.ManagementRPC.Port != 8086 {
 		t.Errorf("port = %d, want 8086", m.Spec.ManagementRPC.Port)

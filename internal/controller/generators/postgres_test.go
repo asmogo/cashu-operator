@@ -133,8 +133,9 @@ func TestGeneratePostgresService_AutoProvision(t *testing.T) {
 	if svc == nil {
 		t.Fatal("expected Service, got nil")
 	}
-	if svc.Name != "pg-mint-postgres" {
-		t.Errorf("name = %q, want %q", svc.Name, "pg-mint-postgres")
+	const pgMintPostgres = "pg-mint-postgres"
+	if svc.Name != pgMintPostgres {
+		t.Errorf("name = %q, want %q", svc.Name, pgMintPostgres)
 	}
 	if svc.Spec.ClusterIP != "None" {
 		t.Errorf("clusterIP = %q, want None (headless)", svc.Spec.ClusterIP)
@@ -184,14 +185,15 @@ func TestGeneratePostgresStatefulSet_Defaults(t *testing.T) {
 	if sts == nil {
 		t.Fatal("expected StatefulSet, got nil")
 	}
-	if sts.Name != "pg-mint-postgres" {
-		t.Errorf("name = %q, want %q", sts.Name, "pg-mint-postgres")
+	const pgMintPostgres = "pg-mint-postgres"
+	if sts.Name != pgMintPostgres {
+		t.Errorf("name = %q, want %q", sts.Name, pgMintPostgres)
 	}
 	if *sts.Spec.Replicas != 1 {
 		t.Errorf("replicas = %d, want 1", *sts.Spec.Replicas)
 	}
-	if sts.Spec.ServiceName != "pg-mint-postgres" {
-		t.Errorf("serviceName = %q, want %q", sts.Spec.ServiceName, "pg-mint-postgres")
+	if sts.Spec.ServiceName != pgMintPostgres {
+		t.Errorf("serviceName = %q, want %q", sts.Spec.ServiceName, pgMintPostgres)
 	}
 
 	// Check default PVC size
@@ -257,8 +259,9 @@ func TestGeneratePostgresStatefulSet_CustomSpec(t *testing.T) {
 	}
 
 	// Custom storage class
+	const fastSSD = "fast-ssd"
 	sc := sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName
-	if sc == nil || *sc != "fast-ssd" {
+	if sc == nil || *sc != fastSSD {
 		t.Errorf("storageClassName = %v, want fast-ssd", sc)
 	}
 
