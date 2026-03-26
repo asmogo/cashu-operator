@@ -32,3 +32,11 @@ jobs:
         run: |
           go mod tidy
           make test-e2e
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: cover-e2e.out
+          flags: e2e
+          fail_ci_if_error: true
