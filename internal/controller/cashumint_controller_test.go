@@ -979,6 +979,121 @@ var _ = Describe("CashuMint Controller", func() {
 		})
 	})
 
+	Context("When configuring SQLite (PVC) and Ingress", func() {
+		const resourceName = "test-full-features"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			By("creating the custom resource with SQLite and Ingress/TLS")
+			resource := &mintv1alpha1.CashuMint{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mintv1alpha1.CashuMintSpec{
+					MintInfo: mintv1alpha1.MintInfo{URL: "http://test-full.local"},
+					Database: mintv1alpha1.DatabaseConfig{
+						Engine: mintv1alpha1.DatabaseEngineSQLite,
+						SQLite: &mintv1alpha1.SQLiteConfig{DataDir: "/data"},
+					},
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
+					},
+					Ingress: &mintv1alpha1.IngressConfig{
+						Enabled: true,
+						Host:    "mint.example.test",
+						TLS: &mintv1alpha1.IngressTLSConfig{
+							Enabled: true,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mintv1alpha1.CashuMint{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+		})
+
+		It("should successfully reconcile PVC and Ingress", func() {
+			controllerReconciler := &CashuMintReconciler{
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
+			}
+
+			for i := 0; i < 3; i++ {
+				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			// Check PVC
+			pvc := &corev1.PersistentVolumeClaim{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-data", Namespace: "default"}, pvc)).To(Succeed())
+
+			// Check Ingress
+			ingress := &networkingv1.Ingress{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, ingress)).To(Succeed())
+			Expect(ingress.Spec.Rules).To(HaveLen(1))
+			Expect(ingress.Spec.Rules[0].Host).To(Equal("mint.example.test"))
+		})
+	})
+
+	Context("Deletion", func() {
+		const resourceName = "test-deletion"
+		ctx := context.Background()
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			resource := &mintv1alpha1.CashuMint{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mintv1alpha1.CashuMintSpec{
+					MintInfo: mintv1alpha1.MintInfo{URL: "http://test-deletion.local"},
+					Database: mintv1alpha1.DatabaseConfig{Engine: mintv1alpha1.DatabaseEngineSQLite},
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		It("should handle deletion smoothly", func() {
+			resource := &mintv1alpha1.CashuMint{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, resource)).To(Succeed())
+			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+
+			controllerReconciler := &CashuMintReconciler{
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
+			}
+
+			for i := 0; i < 3; i++ {
+				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+		})
+	})
+
 	// The "When using managed payment processors" Context was removed because
 	// standalone PaymentProcessors are no longer supported. Use the generic
 	// sidecar (spec.lightning.grpcProcessor.sidecarProcessor) instead.

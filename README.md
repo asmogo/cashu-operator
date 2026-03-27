@@ -3,6 +3,7 @@
 [![Release](https://img.shields.io/github/v/release/asmogo/cashu-operator)](https://github.com/asmogo/cashu-operator/releases)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![CI](https://github.com/asmogo/cashu-operator/actions/workflows/test.yml/badge.svg)](https://github.com/asmogo/cashu-operator/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/asmogo/cashu-operator/branch/main/graph/badge.svg)](https://codecov.io/gh/asmogo/cashu-operator)
 [![Go Report Card](https://goreportcard.com/badge/github.com/asmogo/cashu-operator)](https://goreportcard.com/report/github.com/asmogo/cashu-operator)
 
 A Kubernetes operator for running [CDK mintd](https://github.com/cashubtc/cdk) (Cashu mints) with full lifecycle automation -- database provisioning, Lightning backend configuration, ingress, TLS, and rolling updates from a single `CashuMint` custom resource.

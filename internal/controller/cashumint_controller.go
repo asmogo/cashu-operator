@@ -452,7 +452,7 @@ func (r *CashuMintReconciler) handleError(ctx context.Context, cashuMint *mintv1
 	if apierrors.IsConflict(err) {
 		// Conflict: retry immediately
 		logger.Info("Conflict detected, retrying")
-		return ctrl.Result{Requeue: true}, nil
+		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 	}
 
 	if apierrors.IsNotFound(err) {

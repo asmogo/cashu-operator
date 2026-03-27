@@ -1,0 +1,23 @@
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+flags:
+  unit:
+    paths:
+      - "!test/e2e/**"
+  e2e:
+    paths:
+      - test/e2e/**
+
+ignore:
+  - "config/**"
+  - "dist/**"
+  - "hack/**"
