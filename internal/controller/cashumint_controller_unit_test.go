@@ -33,7 +33,7 @@ func TestHandleError(t *testing.T) {
 		if err != nil {
 			t.Fatalf("handleError() error = %v, want nil", err)
 		}
-		if !result.Requeue {
+		if result.RequeueAfter == 0 {
 			t.Fatal("handleError() should request an immediate requeue on conflicts")
 		}
 	})
@@ -56,7 +56,7 @@ func TestHandleError(t *testing.T) {
 		if err == nil {
 			t.Fatal("handleError() error = nil, want non-nil")
 		}
-		if result.Requeue || result.RequeueAfter != 0 {
+		if result.RequeueAfter != 0 {
 			t.Fatalf("unexpected result from handleError(): %+v", result)
 		}
 

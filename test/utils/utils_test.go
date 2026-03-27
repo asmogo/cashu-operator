@@ -123,10 +123,13 @@ func TestInstallCertManager(t *testing.T) {
 	if got, want := len(lines), 2; got != want {
 		t.Fatalf("len(log lines) = %d, want %d (%v)", got, want, lines)
 	}
-	if !strings.Contains(lines[0], "apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml") {
+	applyCmd := "apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml"
+	if !strings.Contains(lines[0], applyCmd) {
 		t.Fatalf("unexpected apply command: %q", lines[0])
 	}
-	if !strings.Contains(lines[1], "wait deployment.apps/cert-manager-webhook --for condition=Available --namespace cert-manager --timeout 5m") {
+	waitCmd := "wait deployment.apps/cert-manager-webhook --for condition=Available" +
+		" --namespace cert-manager --timeout 5m"
+	if !strings.Contains(lines[1], waitCmd) {
 		t.Fatalf("unexpected wait command: %q", lines[1])
 	}
 }
@@ -157,13 +160,18 @@ func TestUninstallCertManager(t *testing.T) {
 	if got, want := len(lines), 3; got != want {
 		t.Fatalf("len(log lines) = %d, want %d (%v)", got, want, lines)
 	}
-	if !strings.Contains(lines[0], "delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml") {
+	deleteCmd := "delete -f https://github.com/cert-manager/cert-manager/releases/download/v1.18.2/cert-manager.yaml"
+	if !strings.Contains(lines[0], deleteCmd) {
 		t.Fatalf("unexpected uninstall command: %q", lines[0])
 	}
-	if !strings.Contains(lines[1], "delete lease cert-manager-cainjector-leader-election -n kube-system --ignore-not-found --force --grace-period=0") {
+	lease1Cmd := "delete lease cert-manager-cainjector-leader-election" +
+		" -n kube-system --ignore-not-found --force --grace-period=0"
+	if !strings.Contains(lines[1], lease1Cmd) {
 		t.Fatalf("unexpected first lease cleanup command: %q", lines[1])
 	}
-	if !strings.Contains(lines[2], "delete lease cert-manager-controller -n kube-system --ignore-not-found --force --grace-period=0") {
+	lease2Cmd := "delete lease cert-manager-controller" +
+		" -n kube-system --ignore-not-found --force --grace-period=0"
+	if !strings.Contains(lines[2], lease2Cmd) {
 		t.Fatalf("unexpected second lease cleanup command: %q", lines[2])
 	}
 }
@@ -206,7 +214,8 @@ func TestUncommentCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFile() error = %v", err)
 	}
-	if got := string(content); strings.Contains(got, "// fmt.Println") || !strings.Contains(got, "fmt.Println(\"hello\")") {
+	got := string(content)
+	if strings.Contains(got, "// fmt.Println") || !strings.Contains(got, "fmt.Println(\"hello\")") {
 		t.Fatalf("unexpected uncommented content: %q", got)
 	}
 }
