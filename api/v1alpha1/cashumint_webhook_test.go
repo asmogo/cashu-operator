@@ -174,8 +174,8 @@ func TestDefault_Ingress(t *testing.T) {
 	m := validMint()
 	m.Spec.Ingress = &IngressConfig{Enabled: true, Host: "mint.local"}
 	m.Default()
-	if m.Spec.Ingress.ClassName != "nginx" {
-		t.Errorf("className = %q, want nginx", m.Spec.Ingress.ClassName)
+	if m.Spec.Ingress.ClassName != DefaultIngressClassName {
+		t.Errorf("className = %q, want %s", m.Spec.Ingress.ClassName, DefaultIngressClassName)
 	}
 }
 

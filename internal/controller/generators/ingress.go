@@ -42,7 +42,7 @@ func GenerateIngress(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*net
 	pathTypePrefix := networkingv1.PathTypePrefix
 	ingressClassName := mint.Spec.Ingress.ClassName
 	if ingressClassName == "" {
-		ingressClassName = "nginx"
+		ingressClassName = mintv1alpha1.DefaultIngressClassName
 	}
 
 	// Default annotations for nginx ingress

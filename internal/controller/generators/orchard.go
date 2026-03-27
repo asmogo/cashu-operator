@@ -590,7 +590,7 @@ func GenerateOrchardIngress(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme
 	pathTypePrefix := networkingv1.PathTypePrefix
 	ingressClassName := mint.Spec.Orchard.Ingress.ClassName
 	if ingressClassName == "" {
-		ingressClassName = "nginx"
+		ingressClassName = mintv1alpha1.DefaultIngressClassName
 	}
 
 	annotations := map[string]string{

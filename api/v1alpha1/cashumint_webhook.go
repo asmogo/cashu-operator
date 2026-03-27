@@ -128,7 +128,7 @@ func defaultIngressConfig(ingress *IngressConfig) {
 		return
 	}
 	if ingress.ClassName == "" {
-		ingress.ClassName = "nginx"
+		ingress.ClassName = DefaultIngressClassName
 	}
 	if ingress.TLS != nil && ingress.TLS.CertManager != nil {
 		if ingress.TLS.CertManager.IssuerKind == "" {

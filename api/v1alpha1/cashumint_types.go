@@ -34,6 +34,7 @@ const (
 	DefaultLoopbackHost         = "127.0.0.1"
 	DefaultStorageSize          = "10Gi"
 	DefaultClusterIssuerKind    = "ClusterIssuer"
+	DefaultIngressClassName     = "nginx"
 	DefaultMintImage            = "cashubtc/mintd:0.15.0"
 	DefaultOrchardSQLiteImage   = "ghcr.io/orangeshyguy21/orchard-mintdb-sqlite:latest"
 	DefaultOrchardPostgresImage = "ghcr.io/orangeshyguy21/orchard-mintdb-postgres:latest"
