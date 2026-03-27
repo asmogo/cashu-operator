@@ -49,8 +49,8 @@ func TestGenerateEnvironmentVariables_CoversDirectAndSecretSources(t *testing.T)
 	envVars := generateEnvironmentVariables(mint)
 	values := envVarMap(envVars)
 
-	if values["CDK_MINTD_DATABASE_URL"] != "postgresql://user:pass@db:5432/cashu" {
-		t.Fatalf("CDK_MINTD_DATABASE_URL = %q, want direct postgres URL", values["CDK_MINTD_DATABASE_URL"])
+	if values["CDK_MINTD_POSTGRES_URL"] != "postgresql://user:pass@db:5432/cashu" {
+		t.Fatalf("CDK_MINTD_POSTGRES_URL = %q, want direct postgres URL", values["CDK_MINTD_POSTGRES_URL"])
 	}
 	if values["REDIS_CONNECTION_STRING"] != "redis://cache:6379/0" {
 		t.Fatalf("REDIS_CONNECTION_STRING = %q, want direct redis URL", values["REDIS_CONNECTION_STRING"])
