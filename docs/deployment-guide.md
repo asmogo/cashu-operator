@@ -42,9 +42,10 @@ Evaluate the Lightning payment processor your mint needs:
 
 - **PostgreSQL auto-provisioned**: defaults to `10Gi`. Use production storage class with SSD-backed volumes. Adjust `spec.database.postgres.autoProvisionSpec.storageSize`.
 - **SQLite/redb**: set `spec.storage.size` to desired capacity (include growth over time). Ensure ReadWriteOnce volume suits single replica deployment.
+- **Orchard**: when enabled, Orchard gets its own PVC for application state even if the mint database is PostgreSQL. Size `spec.orchard.storage` separately from the mint database/storage.
 - **Backups**: For auto-provisioned PostgreSQL, you can configure scheduled S3-compatible `pg_dump` backups via `spec.backup`.
 - **Backup scope**: Current operator-managed backups target auto-provisioned PostgreSQL and upload dumps to object storage.
-- **CDK v0.15 default + migration safety**: The default mint image is `ghcr.io/cashubtc/cdk-mintd:v0.15.0`. For PostgreSQL mints, admission warnings are emitted for `cdk-mintd:v0.15*`; always take a verified database backup immediately before rollout/upgrades.
+- **CDK v0.15 default + migration safety**: The default mint image is `cashubtc/mintd:0.15.0`. For PostgreSQL mints, take a verified database backup immediately before rollout/upgrades because CDK v0.15 performs database migrations.
 
 ---
 
@@ -168,6 +169,103 @@ stringData:
 - Supported TLS modes: `disable`, `prefer`, `require`. Defaults to `require`.
 - Mutual exclusivity: only one of `url` or `urlSecretRef`.
 - Set `maxConnections` and `connectionTimeoutSeconds` to match DB quotas.
+
+### 2.4 Orchard Companion Deployment
+
+Orchard is deployed as an optional companion container in the same pod as `cdk-mintd`.
+That gives Orchard direct access to:
+
+- the mint API over `127.0.0.1:<listenPort>`
+- the mint management RPC over `127.0.0.1:<managementRPC.port>`
+- the mint work directory for sqlite-backed mints
+
+The operator also creates Orchard-specific Kubernetes resources:
+
+- a dedicated PVC for Orchard application state (`<mint-name>-orchard-data`)
+- a dedicated Service (`<mint-name>-orchard`)
+- an optional dedicated Ingress and optional cert-manager `Certificate`
+
+Orchard supports sqlite and PostgreSQL **mint** databases:
+
+- for sqlite mints, the operator wires Orchard to `/mnt/mint/cdk-mintd.sqlite`
+- for postgres mints, the operator reuses the same PostgreSQL URL or generated secret the mint uses
+
+Orchard itself always persists its own application state in sqlite on its own PVC.
+
+#### 2.4.1 Minimal Orchard example (sqlite mint)
+
+```yaml
+spec:
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  managementRPC:
+    enabled: true
+  orchard:
+    enabled: true
+    setupKeySecretRef:
+      name: orchard-setup
+      key: setup-key
+    storage:
+      size: 5Gi
+    ingress:
+      enabled: true
+      host: orchard.example.com
+```
+
+#### 2.4.2 Orchard with PostgreSQL mint and secure management RPC
+
+```yaml
+spec:
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+  managementRPC:
+    enabled: true
+  orchard:
+    enabled: true
+    setupKeySecretRef:
+      name: orchard-setup
+      key: setup-key
+    mint:
+      rpc:
+        mTLS: true
+    ingress:
+      enabled: true
+      host: orchard.example.com
+      tls:
+        enabled: true
+        certManager:
+          enabled: true
+          issuerName: letsencrypt-prod
+```
+
+When Orchard uses mTLS to the colocated management RPC, the operator ensures a TLS secret exists. By default it uses `<cashumint-name>-management-rpc-tls`; if you set `spec.managementRPC.tlsSecretRef.name`, that name is used instead.
+
+- `ca.pem`
+- `server.pem`
+- `server.key`
+- `client.pem`
+- `client.key`
+
+The mint uses the server-side files; Orchard uses the client-side files. If the secret is absent, the operator generates it automatically.
+
+#### 2.4.3 Optional Orchard integrations
+
+You can also configure Orchard’s optional integrations via `spec.orchard`:
+
+- `bitcoin` for Bitcoin Core RPC
+- `lightning` for LND or CLN RPC
+- `taprootAssets` for `tapd`
+- `ai` for Ollama or another compatible AI endpoint
+- `extraEnv` for advanced or future Orchard environment variables
+
+Sample manifests:
+
+- `config/samples/mint_v1alpha1_cashumint_orchard_sqlite.yaml`
+- `config/samples/mint_v1alpha1_cashumint_orchard_postgres.yaml`
 
 ---
 

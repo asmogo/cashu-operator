@@ -90,6 +90,8 @@ func GenerateDeployment(mint *mintv1alpha1.CashuMint, configHash string, scheme 
 // generatePodSpec creates the pod specification for the mint
 func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	containers := []corev1.Container{}
+	volumes := generateVolumes(mint)
+	volumes = append(volumes, GenerateOrchardVolumes(mint)...)
 
 	backend := mint.Spec.PaymentBackend.ActiveBackend()
 
@@ -106,9 +108,12 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 		containers = append(containers, generateLDKContainer(mint))
 	}
 	containers = append(containers, generateMintContainer(mint))
+	if orchardEnabled(mint) {
+		containers = append(containers, GenerateOrchardContainer(mint))
+	}
 	podSpec := corev1.PodSpec{
 		Containers:       containers,
-		Volumes:          generateVolumes(mint),
+		Volumes:          volumes,
 		ImagePullSecrets: mint.Spec.ImagePullSecrets,
 		NodeSelector:     mint.Spec.NodeSelector,
 		Tolerations:      mint.Spec.Tolerations,
@@ -123,7 +128,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	image := mint.Spec.Image
 	if image == "" {
-		image = "ghcr.io/cashubtc/cdk-mintd:latest"
+		image = mintv1alpha1.DefaultMintImage
 	}
 
 	imagePullPolicy := mint.Spec.ImagePullPolicy
@@ -308,165 +313,240 @@ func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Cont
 }
 
 // generateEnvironmentVariables creates environment variables for the mint container
+// generateEnvironmentVariables assembles all env vars for the mintd container
+// by delegating each concern to a focused helper.
+// cdk-mintd >= 0.15.0 calls Settings::from_env() after config-file parsing, so
+// env vars are the authoritative source for every field that has one.
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
-	envVars := []corev1.EnvVar{
-		{
-			// CDK_MINTD_WORK_DIR tells cdk-mintd where its work directory is.
-			// The binary looks for config.toml at $CDK_MINTD_WORK_DIR/config.toml,
-			// and stores SQLite DB, logs, and TLS material under this path.
-			// We mount config.toml into /data/config.toml and use /data as work dir.
-			Name:  "CDK_MINTD_WORK_DIR",
-			Value: "/data",
-		},
-		{
-			Name:  "HOME",
-			Value: "/data",
-		},
-	}
-
-	// Logging configuration
-	if mint.Spec.Logging != nil {
-		if mint.Spec.Logging.Level != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "RUST_LOG",
-				Value: mint.Spec.Logging.Level,
-			})
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "LOG_LEVEL",
-				Value: mint.Spec.Logging.Level,
-			})
-		}
-		if mint.Spec.Logging.Format != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "LOG_FORMAT",
-				Value: mint.Spec.Logging.Format,
-			})
-		}
-	}
-
-	// Mnemonic from secret
-	if mint.Spec.MintInfo.MnemonicSecretRef != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "CDK_MINTD_MNEMONIC",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: mint.Spec.MintInfo.MnemonicSecretRef,
-			},
-		})
-	}
-
-	// Database configuration
-	// Note: For auto-provisioned postgres, the URL with password is written directly into the config file.
-	// For external postgres with URLSecretRef, we still inject via environment variable.
-	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres && mint.Spec.Database.Postgres != nil {
-		if mint.Spec.Database.Postgres.URLSecretRef != nil {
-			envVars = append(envVars, corev1.EnvVar{
-				Name: "CDK_MINTD_DATABASE_URL",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: mint.Spec.Database.Postgres.URLSecretRef,
-				},
-			})
-		} else if mint.Spec.Database.Postgres.URL != "" {
-			// Direct URL (not recommended for production)
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "CDK_MINTD_DATABASE_URL",
-				Value: mint.Spec.Database.Postgres.URL,
-			})
-		}
-	}
-
-	// Auth database configuration
-	if mint.Spec.Auth != nil && mint.Spec.Auth.Enabled &&
-		mint.Spec.Auth.Database != nil && mint.Spec.Auth.Database.Postgres != nil {
-		if mint.Spec.Auth.Database.Postgres.URLSecretRef != nil {
-			envVars = append(envVars, corev1.EnvVar{
-				Name: "CDK_MINTD_AUTH_POSTGRES_URL",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: mint.Spec.Auth.Database.Postgres.URLSecretRef,
-				},
-			})
-		}
-	}
-
-	backend := mint.Spec.PaymentBackend.ActiveBackend()
-
-	// LNBits API keys from secrets
-	if backend == mintv1alpha1.PaymentBackendLNBits && mint.Spec.PaymentBackend.LNBits != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "LNBITS_ADMIN_API_KEY",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &mint.Spec.PaymentBackend.LNBits.AdminAPIKeySecretRef,
-			},
-		})
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "LNBITS_INVOICE_API_KEY",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &mint.Spec.PaymentBackend.LNBits.InvoiceAPIKeySecretRef,
-			},
-		})
-	}
-
-	// Bitcoin RPC credentials for LDK node
-	if mint.Spec.LDKNode != nil && mint.Spec.LDKNode.Enabled &&
-		mint.Spec.LDKNode.BitcoinRPC != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "BITCOIN_RPC_USER",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &mint.Spec.LDKNode.BitcoinRPC.UserSecretRef,
-			},
-		})
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "BITCOIN_RPC_PASSWORD",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &mint.Spec.LDKNode.BitcoinRPC.PasswordSecretRef,
-			},
-		})
-	}
-
-	// LDK node mnemonic from secret
-	if mint.Spec.LDKNode != nil && mint.Spec.LDKNode.Enabled &&
-		mint.Spec.LDKNode.MnemonicSecretRef != nil {
-		envVars = append(envVars, corev1.EnvVar{
-			Name: "CDK_LDK_NODE_MNEMONIC",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: mint.Spec.LDKNode.MnemonicSecretRef,
-			},
-		})
-	}
-
-	// HTTP cache Redis connection string
-	if mint.Spec.HTTPCache != nil && mint.Spec.HTTPCache.Backend == "redis" &&
-		mint.Spec.HTTPCache.Redis != nil {
-		if mint.Spec.HTTPCache.Redis.ConnectionStringSecretRef != nil {
-			envVars = append(envVars, corev1.EnvVar{
-				Name: "REDIS_CONNECTION_STRING",
-				ValueFrom: &corev1.EnvVarSource{
-					SecretKeyRef: mint.Spec.HTTPCache.Redis.ConnectionStringSecretRef,
-				},
-			})
-		} else if mint.Spec.HTTPCache.Redis.ConnectionString != "" {
-			envVars = append(envVars, corev1.EnvVar{
-				Name:  "REDIS_CONNECTION_STRING",
-				Value: mint.Spec.HTTPCache.Redis.ConnectionString,
-			})
-		}
-	}
-
+	envVars := mintCoreEnvVars(mint)
+	envVars = append(envVars, mintLoggingEnvVars(mint)...)
+	envVars = append(envVars, mintMnemonicEnvVars(mint)...)
+	envVars = append(envVars, mintDatabaseEnvVars(mint)...)
+	envVars = append(envVars, mintManagementRPCEnvVars(mint)...)
+	envVars = append(envVars, mintPaymentBackendEnvVars(mint)...)
+	envVars = append(envVars, mintLDKEnvVars(mint)...)
+	envVars = append(envVars, mintHTTPCacheEnvVars(mint)...)
 	return envVars
+}
+
+// mintCoreEnvVars returns env vars that are always required (work dir, URL, listen
+// address/port, database engine, and logging output).
+func mintCoreEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	listenHost := mint.Spec.MintInfo.ListenHost
+	if listenHost == "" {
+		listenHost = mintv1alpha1.DefaultListenHost
+	}
+	listenPort := mint.Spec.MintInfo.ListenPort
+	if listenPort == 0 {
+		listenPort = 8085
+	}
+	return []corev1.EnvVar{
+		{Name: "CDK_MINTD_WORK_DIR", Value: "/data"},
+		{Name: "HOME", Value: "/data"},
+		{Name: "CDK_MINTD_LN_BACKEND", Value: mint.Spec.PaymentBackend.ActiveBackend()},
+		{Name: "CDK_MINTD_URL", Value: mint.Spec.MintInfo.URL},
+		{Name: "CDK_MINTD_LISTEN_HOST", Value: listenHost},
+		{Name: "CDK_MINTD_LISTEN_PORT", Value: fmt.Sprintf("%d", listenPort)},
+		{Name: "CDK_MINTD_DATABASE", Value: mint.Spec.Database.Engine},
+		// CDK_MINTD_LOGGING_OUTPUT=stderr activates the tracing subscriber without
+		// requiring --enable-logging as a CLI arg (which overrides the entrypoint).
+		{Name: "CDK_MINTD_LOGGING_OUTPUT", Value: "stderr"},
+	}
+}
+
+// mintLoggingEnvVars returns optional log-level env vars.
+func mintLoggingEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mint.Spec.Logging == nil {
+		return nil
+	}
+	var vars []corev1.EnvVar
+	if mint.Spec.Logging.Level != "" {
+		vars = append(vars,
+			corev1.EnvVar{Name: "RUST_LOG", Value: mint.Spec.Logging.Level},
+			corev1.EnvVar{Name: "CDK_MINTD_LOGGING_CONSOLE_LEVEL", Value: mint.Spec.Logging.Level},
+		)
+	}
+	if mint.Spec.Logging.FileLevel != "" {
+		vars = append(vars, corev1.EnvVar{Name: "CDK_MINTD_LOGGING_FILE_LEVEL", Value: mint.Spec.Logging.FileLevel})
+	}
+	return vars
+}
+
+// mintMnemonicEnvVars injects CDK_MINTD_MNEMONIC from either a user-supplied
+// SecretKeySelector or the operator-managed auto-generated secret.
+func mintMnemonicEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	ref := mint.Spec.MintInfo.MnemonicSecretRef
+	if ref == nil && mint.Spec.MintInfo.AutoGenerateMnemonic {
+		ref = &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: MnemonicSecretName(mint.Name)},
+			Key:                  MnemonicSecretKey,
+		}
+	}
+	if ref == nil {
+		return nil
+	}
+	return []corev1.EnvVar{{
+		Name:      "CDK_MINTD_MNEMONIC",
+		ValueFrom: &corev1.EnvVarSource{SecretKeyRef: ref},
+	}}
+}
+
+// mintDatabaseEnvVars injects the postgres connection URL and, when auth is
+// enabled, the auth-database URL.
+func mintDatabaseEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	var vars []corev1.EnvVar
+
+	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres && mint.Spec.Database.Postgres != nil {
+		vars = append(vars, postgresURLEnvVar(mint))
+	}
+
+	if mint.Spec.Auth != nil && mint.Spec.Auth.Enabled &&
+		mint.Spec.Auth.Database != nil && mint.Spec.Auth.Database.Postgres != nil &&
+		mint.Spec.Auth.Database.Postgres.URLSecretRef != nil {
+		vars = append(vars, corev1.EnvVar{
+			Name:      "CDK_MINTD_AUTH_POSTGRES_URL",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: mint.Spec.Auth.Database.Postgres.URLSecretRef},
+		})
+	}
+
+	return vars
+}
+
+// postgresURLEnvVar builds the CDK_MINTD_POSTGRES_URL env var for auto-provisioned,
+// secret-ref, or plain-URL postgres configurations.
+func postgresURLEnvVar(mint *mintv1alpha1.CashuMint) corev1.EnvVar {
+	pg := mint.Spec.Database.Postgres
+	if pg.AutoProvision {
+		return corev1.EnvVar{
+			Name: "CDK_MINTD_POSTGRES_URL",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: mint.Name + "-postgres-secret"},
+					Key:                  "database-url",
+				},
+			},
+		}
+	}
+	if pg.URLSecretRef != nil {
+		return corev1.EnvVar{
+			Name:      "CDK_MINTD_POSTGRES_URL",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: pg.URLSecretRef},
+		}
+	}
+	return corev1.EnvVar{Name: "CDK_MINTD_POSTGRES_URL", Value: pg.URL}
+}
+
+// mintManagementRPCEnvVars injects CDK_MINTD_MINT_MANAGEMENT_ENABLED and related
+// env vars when the management RPC is enabled. The TOML `enabled` field alone is
+// insufficient because from_env() re-initialises the struct from defaults (false)
+// before overlaying env vars.
+func mintManagementRPCEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mint.Spec.ManagementRPC == nil || !mint.Spec.ManagementRPC.Enabled {
+		return nil
+	}
+	rpcPort := mint.Spec.ManagementRPC.Port
+	if rpcPort == 0 {
+		rpcPort = 8086
+	}
+	rpcAddress := mint.Spec.ManagementRPC.Address
+	if rpcAddress == "" {
+		rpcAddress = mintv1alpha1.DefaultLoopbackHost
+	}
+	vars := []corev1.EnvVar{
+		{Name: "CDK_MINTD_MINT_MANAGEMENT_ENABLED", Value: "true"},
+		{Name: "CDK_MINTD_MANAGEMENT_ADDRESS", Value: rpcAddress},
+		{Name: "CDK_MINTD_MANAGEMENT_PORT", Value: fmt.Sprintf("%d", rpcPort)},
+	}
+	if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
+		vars = append(vars, corev1.EnvVar{
+			Name:  "CDK_MINTD_MANAGEMENT_TLS_DIR_PATH",
+			Value: orchardManagementRPCTLSMountPath,
+		})
+	}
+	return vars
+}
+
+// mintPaymentBackendEnvVars injects secret-backed credentials for LNBits.
+func mintPaymentBackendEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mint.Spec.PaymentBackend.ActiveBackend() != mintv1alpha1.PaymentBackendLNBits ||
+		mint.Spec.PaymentBackend.LNBits == nil {
+		return nil
+	}
+	return []corev1.EnvVar{
+		{
+			Name:      "LNBITS_ADMIN_API_KEY",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &mint.Spec.PaymentBackend.LNBits.AdminAPIKeySecretRef},
+		},
+		{
+			Name:      "LNBITS_INVOICE_API_KEY",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &mint.Spec.PaymentBackend.LNBits.InvoiceAPIKeySecretRef},
+		},
+	}
+}
+
+// mintLDKEnvVars injects Bitcoin RPC credentials and the LDK node mnemonic.
+func mintLDKEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mint.Spec.LDKNode == nil || !mint.Spec.LDKNode.Enabled {
+		return nil
+	}
+	var vars []corev1.EnvVar
+	if mint.Spec.LDKNode.BitcoinRPC != nil {
+		vars = append(vars,
+			corev1.EnvVar{
+				Name:      "BITCOIN_RPC_USER",
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &mint.Spec.LDKNode.BitcoinRPC.UserSecretRef},
+			},
+			corev1.EnvVar{
+				Name:      "BITCOIN_RPC_PASSWORD",
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &mint.Spec.LDKNode.BitcoinRPC.PasswordSecretRef},
+			},
+		)
+	}
+	if mint.Spec.LDKNode.MnemonicSecretRef != nil {
+		vars = append(vars, corev1.EnvVar{
+			Name:      "CDK_LDK_NODE_MNEMONIC",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: mint.Spec.LDKNode.MnemonicSecretRef},
+		})
+	}
+	return vars
+}
+
+// mintHTTPCacheEnvVars injects the Redis connection string when the HTTP cache
+// backend is configured as redis.
+func mintHTTPCacheEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mint.Spec.HTTPCache == nil || mint.Spec.HTTPCache.Backend != "redis" ||
+		mint.Spec.HTTPCache.Redis == nil {
+		return nil
+	}
+	if mint.Spec.HTTPCache.Redis.ConnectionStringSecretRef != nil {
+		return []corev1.EnvVar{{
+			Name:      "REDIS_CONNECTION_STRING",
+			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: mint.Spec.HTTPCache.Redis.ConnectionStringSecretRef},
+		}}
+	}
+	if mint.Spec.HTTPCache.Redis.ConnectionString != "" {
+		return []corev1.EnvVar{{Name: "REDIS_CONNECTION_STRING", Value: mint.Spec.HTTPCache.Redis.ConnectionString}}
+	}
+	return nil
 }
 
 // generateVolumeMounts creates volume mounts for the mint container
 func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
+	// IMPORTANT: "data" must be mounted before "config" so that the subPath
+	// config.toml bind-mount is applied into the already-present /data directory.
+	// If "config" came first, the subsequent emptyDir/PVC mount of /data would
+	// shadow the subPath file and CDK would start with no config.toml.
 	mounts := []corev1.VolumeMount{
+		{
+			Name:      "data",
+			MountPath: "/data",
+		},
 		{
 			// Mount config.toml into the work dir so CDK finds it at $CDK_MINTD_WORK_DIR/config.toml
 			Name:      "config",
 			MountPath: "/data/config.toml",
 			SubPath:   "config.toml",
 			ReadOnly:  true,
-		},
-		{
-			Name:      "data",
-			MountPath: "/data",
 		},
 	}
 
@@ -499,6 +579,14 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      "grpc-tls",
 			MountPath: "/secrets/grpc",
+			ReadOnly:  true,
+		})
+	}
+
+	if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
+		mounts = append(mounts, corev1.VolumeMount{
+			Name:      managementRPCTLSVolumeName,
+			MountPath: orchardManagementRPCTLSMountPath,
 			ReadOnly:  true,
 		})
 	}
@@ -577,6 +665,17 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: mint.Spec.PaymentBackend.GRPCProcessor.TLSSecretRef.Name,
+				},
+			},
+		})
+	}
+
+	if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
+		volumes = append(volumes, corev1.Volume{
+			Name: managementRPCTLSVolumeName,
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: mintv1alpha1.ManagementRPCTLSSecretName(&mint.Spec, mint.Name),
 				},
 			},
 		})

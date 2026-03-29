@@ -4,6 +4,9 @@ resources:
   - mint_v1alpha1_cashumint_postgres_auto.yaml
   - mint_v1alpha1_cashumint_external_postgres.yaml
   - mint_v1alpha1_cashumint_lnd.yaml
+  - mint_v1alpha1_cashumint_orchard_setup_secret.yaml
+  - mint_v1alpha1_cashumint_orchard_sqlite.yaml
+  - mint_v1alpha1_cashumint_orchard_postgres.yaml
   - mint_v1alpha1_cashumint_spark_breez.yaml
   - mint_v1alpha1_cashumint_stripe_processor.yaml
   - mint_v1alpha1_cashumint_production.yaml

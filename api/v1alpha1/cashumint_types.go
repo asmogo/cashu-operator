@@ -28,8 +28,38 @@ const (
 	DatabaseEngineRedb     = "redb"
 )
 
-// DefaultListenHost is the default bind address used across the operator.
-const DefaultListenHost = "0.0.0.0"
+// Common operator defaults reused across API defaulting and generators.
+const (
+	DefaultListenHost           = "0.0.0.0"
+	DefaultLoopbackHost         = "127.0.0.1"
+	DefaultStorageSize          = "10Gi"
+	DefaultClusterIssuerKind    = "ClusterIssuer"
+	DefaultIngressClassName     = "nginx"
+	DefaultMintImage            = "cashubtc/mintd:0.15.0"
+	DefaultOrchardSQLiteImage   = "ghcr.io/orangeshyguy21/orchard-mintdb-sqlite:latest"
+	DefaultOrchardPostgresImage = "ghcr.io/orangeshyguy21/orchard-mintdb-postgres:latest"
+)
+
+func DefaultOrchardImage(databaseEngine string) string {
+	if databaseEngine == DatabaseEnginePostgres {
+		return DefaultOrchardPostgresImage
+	}
+	return DefaultOrchardSQLiteImage
+}
+
+func ManagementRPCTLSEnabled(spec *CashuMintSpec) bool {
+	if spec == nil || spec.ManagementRPC == nil || !spec.ManagementRPC.Enabled {
+		return false
+	}
+	return (spec.Orchard != nil && spec.Orchard.Enabled) || spec.ManagementRPC.TLSSecretRef != nil
+}
+
+func ManagementRPCTLSSecretName(spec *CashuMintSpec, mintName string) string {
+	if spec != nil && spec.ManagementRPC != nil && spec.ManagementRPC.TLSSecretRef != nil && spec.ManagementRPC.TLSSecretRef.Name != "" {
+		return spec.ManagementRPC.TLSSecretRef.Name
+	}
+	return mintName + "-management-rpc-tls"
+}
 
 // Payment backend values
 const (
@@ -68,7 +98,7 @@ type CashuMint struct {
 // CashuMintSpec defines the desired state of CashuMint
 type CashuMintSpec struct {
 	// Image specifies the container image to use
-	// +kubebuilder:default="ghcr.io/cashubtc/cdk-mintd:latest"
+	// +kubebuilder:default="cashubtc/mintd:0.15.0"
 	// +optional
 	Image string `json:"image,omitempty"`
 
@@ -115,6 +145,10 @@ type CashuMintSpec struct {
 	// ManagementRPC enables the management RPC interface
 	// +optional
 	ManagementRPC *ManagementRPCConfig `json:"managementRPC,omitempty"`
+
+	// Orchard specifies optional Orchard deployment alongside the mint
+	// +optional
+	Orchard *OrchardConfig `json:"orchard,omitempty"`
 
 	// Prometheus specifies Prometheus metrics endpoint configuration
 	// +optional
@@ -189,10 +223,19 @@ type MintInfo struct {
 	// +optional
 	ListenPort int32 `json:"listenPort,omitempty"`
 
-	// MnemonicSecretRef references a Secret containing the mnemonic
-	// Required for production, should never be in plain text
+	// MnemonicSecretRef references a Secret containing the mnemonic.
+	// Required for production unless AutoGenerateMnemonic is true.
+	// Should never be stored in plain text.
 	// +optional
 	MnemonicSecretRef *corev1.SecretKeySelector `json:"mnemonicSecretRef,omitempty"`
+
+	// AutoGenerateMnemonic instructs the operator to generate and manage a BIP39
+	// mnemonic Secret for the mint. When true and MnemonicSecretRef is not set,
+	// the operator creates a Secret named "<mint-name>-mnemonic" containing a
+	// randomly generated 24-word mnemonic under the key "mnemonic". The Secret
+	// is owned by the CashuMint and deleted when the CR is deleted.
+	// +optional
+	AutoGenerateMnemonic bool `json:"autoGenerateMnemonic,omitempty"`
 
 	// Name is the display name of the mint
 	// +optional
@@ -828,6 +871,261 @@ type ManagementRPCConfig struct {
 	// +kubebuilder:default=8086
 	// +optional
 	Port int32 `json:"port,omitempty"`
+
+	// TLSSecretRef optionally names the Secret containing management RPC TLS materials.
+	// When management RPC TLS is needed and the named Secret does not exist, the operator generates
+	// one using this name. Generated/user-provided Secrets should provide at least ca.pem,
+	// server.pem, and server.key. Orchard mTLS clients also use client.pem and client.key.
+	// +optional
+	TLSSecretRef *corev1.LocalObjectReference `json:"tlsSecretRef,omitempty"`
+}
+
+// OrchardConfig specifies optional Orchard deployment settings.
+type OrchardConfig struct {
+	// Enabled controls whether Orchard is deployed alongside the mint
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// Image specifies the Orchard container image.
+	// When omitted, the operator chooses a postgres or sqlite image variant based on the mint database engine.
+	// +optional
+	Image string `json:"image,omitempty"`
+
+	// ImagePullPolicy specifies when to pull the Orchard image
+	// +kubebuilder:default="IfNotPresent"
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
+	// +optional
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
+
+	// Host is the Orchard listen address
+	// +kubebuilder:default="0.0.0.0"
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// Port is the Orchard listen port
+	// +kubebuilder:default=3321
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// BasePath is the Orchard API base path
+	// +kubebuilder:default="api"
+	// +optional
+	BasePath string `json:"basePath,omitempty"`
+
+	// LogLevel is the Orchard application log level
+	// +kubebuilder:default="warn"
+	// +optional
+	LogLevel string `json:"logLevel,omitempty"`
+
+	// SetupKeySecretRef references the required Orchard setup key secret
+	// +optional
+	SetupKeySecretRef *corev1.SecretKeySelector `json:"setupKeySecretRef,omitempty"`
+
+	// ThrottleTTL configures Orchard request throttling window in milliseconds
+	// +kubebuilder:default=60000
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	ThrottleTTL *int32 `json:"throttleTTL,omitempty"`
+
+	// ThrottleLimit configures Orchard request limit per throttling window
+	// +kubebuilder:default=20
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	ThrottleLimit *int32 `json:"throttleLimit,omitempty"`
+
+	// Proxy configures an optional outbound proxy, for example a Tor SOCKS proxy
+	// +optional
+	Proxy string `json:"proxy,omitempty"`
+
+	// Compression enables HTTP compression in Orchard
+	// +optional
+	Compression *bool `json:"compression,omitempty"`
+
+	// Mint configures how Orchard reaches the managed mint
+	// +optional
+	Mint *OrchardMintConfig `json:"mint,omitempty"`
+
+	// Bitcoin configures optional Bitcoin Core connectivity for Orchard
+	// +optional
+	Bitcoin *OrchardBitcoinConfig `json:"bitcoin,omitempty"`
+
+	// Lightning configures optional Lightning node connectivity for Orchard
+	// +optional
+	Lightning *OrchardLightningConfig `json:"lightning,omitempty"`
+
+	// TaprootAssets configures optional Taproot Assets connectivity for Orchard
+	// +optional
+	TaprootAssets *OrchardTaprootAssetsConfig `json:"taprootAssets,omitempty"`
+
+	// AI configures an optional AI API endpoint for Orchard
+	// +optional
+	AI *OrchardAIConfig `json:"ai,omitempty"`
+
+	// Service specifies Service configuration for Orchard
+	// +optional
+	Service *ServiceConfig `json:"service,omitempty"`
+
+	// Ingress specifies Ingress configuration for Orchard
+	// +optional
+	Ingress *IngressConfig `json:"ingress,omitempty"`
+
+	// Storage specifies persistent storage configuration for Orchard application data
+	// +optional
+	Storage *StorageConfig `json:"storage,omitempty"`
+
+	// Resources specifies compute resource requirements for Orchard
+	// +optional
+	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// ContainerSecurityContext specifies the security context for the Orchard container.
+	// When omitted, the operator uses a default compatible with Orchard's startup script,
+	// which writes a runtime config file into the image filesystem.
+	// +optional
+	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty"`
+
+	// ExtraEnv appends additional environment variables to the Orchard container
+	// +optional
+	ExtraEnv []corev1.EnvVar `json:"extraEnv,omitempty"`
+}
+
+// OrchardMintConfig specifies how Orchard connects to the managed mint.
+type OrchardMintConfig struct {
+	// Type is the managed mint implementation Orchard should expect
+	// +kubebuilder:validation:Enum=cdk;nutshell
+	// +kubebuilder:default=cdk
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// API overrides the mint API endpoint Orchard should use
+	// +optional
+	API string `json:"api,omitempty"`
+
+	// Database overrides the mint database connection string or sqlite file path Orchard should use
+	// +optional
+	Database string `json:"database,omitempty"`
+
+	// DatabaseCASecretRef provides optional PostgreSQL CA material for Orchard
+	// +optional
+	DatabaseCASecretRef *corev1.SecretKeySelector `json:"databaseCaSecretRef,omitempty"`
+
+	// DatabaseCertSecretRef provides optional PostgreSQL client certificate material for Orchard
+	// +optional
+	DatabaseCertSecretRef *corev1.SecretKeySelector `json:"databaseCertSecretRef,omitempty"`
+
+	// DatabaseKeySecretRef provides optional PostgreSQL client private key material for Orchard
+	// +optional
+	DatabaseKeySecretRef *corev1.SecretKeySelector `json:"databaseKeySecretRef,omitempty"`
+
+	// RPC overrides how Orchard connects to the mint management RPC
+	// +optional
+	RPC *OrchardMintRPCConfig `json:"rpc,omitempty"`
+}
+
+// OrchardMintRPCConfig specifies Orchard connectivity to the mint management RPC.
+type OrchardMintRPCConfig struct {
+	// Host overrides the mint management RPC host
+	// +optional
+	Host string `json:"host,omitempty"`
+
+	// Port overrides the mint management RPC port
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	Port int32 `json:"port,omitempty"`
+
+	// MTLS enables mTLS for Orchard connections to the mint management RPC.
+	// When omitted, the operator infers this from management RPC TLS configuration.
+	// +optional
+	MTLS *bool `json:"mTLS,omitempty"`
+}
+
+// OrchardBitcoinConfig specifies optional Orchard Bitcoin Core connectivity.
+type OrchardBitcoinConfig struct {
+	// Type is the Bitcoin backend type
+	// +kubebuilder:validation:Enum=core
+	// +kubebuilder:default=core
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// RPCHost is the Bitcoin Core RPC host
+	// +optional
+	RPCHost string `json:"rpcHost,omitempty"`
+
+	// RPCPort is the Bitcoin Core RPC port
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	// +optional
+	RPCPort int32 `json:"rpcPort,omitempty"`
+
+	// RPCUserSecretRef references the Bitcoin Core RPC username
+	// +optional
+	RPCUserSecretRef *corev1.SecretKeySelector `json:"rpcUserSecretRef,omitempty"`
+
+	// RPCPasswordSecretRef references the Bitcoin Core RPC password
+	// +optional
+	RPCPasswordSecretRef *corev1.SecretKeySelector `json:"rpcPasswordSecretRef,omitempty"`
+}
+
+// OrchardLightningConfig specifies optional Orchard Lightning connectivity.
+type OrchardLightningConfig struct {
+	// Type is the Lightning backend type
+	// +kubebuilder:validation:Enum=lnd;cln
+	Type string `json:"type"`
+
+	// RPCHost is the Lightning RPC host
+	RPCHost string `json:"rpcHost"`
+
+	// RPCPort is the Lightning RPC port
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	RPCPort int32 `json:"rpcPort"`
+
+	// MacaroonSecretRef references the LND macaroon when using type=lnd
+	// +optional
+	MacaroonSecretRef *corev1.SecretKeySelector `json:"macaroonSecretRef,omitempty"`
+
+	// CertSecretRef references the Lightning TLS certificate
+	// +optional
+	CertSecretRef *corev1.SecretKeySelector `json:"certSecretRef,omitempty"`
+
+	// KeySecretRef references the client key when using type=cln
+	// +optional
+	KeySecretRef *corev1.SecretKeySelector `json:"keySecretRef,omitempty"`
+
+	// CASecretRef references the CA certificate when using type=cln
+	// +optional
+	CASecretRef *corev1.SecretKeySelector `json:"caSecretRef,omitempty"`
+}
+
+// OrchardTaprootAssetsConfig specifies optional Orchard Taproot Assets connectivity.
+type OrchardTaprootAssetsConfig struct {
+	// Type is the Taproot Assets backend type
+	// +kubebuilder:validation:Enum=tapd
+	// +kubebuilder:default=tapd
+	// +optional
+	Type string `json:"type,omitempty"`
+
+	// RPCHost is the Taproot Assets RPC host
+	RPCHost string `json:"rpcHost"`
+
+	// RPCPort is the Taproot Assets RPC port
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	RPCPort int32 `json:"rpcPort"`
+
+	// MacaroonSecretRef references the Taproot Assets macaroon
+	MacaroonSecretRef *corev1.SecretKeySelector `json:"macaroonSecretRef,omitempty"`
+
+	// CertSecretRef references the Taproot Assets TLS certificate
+	CertSecretRef *corev1.SecretKeySelector `json:"certSecretRef,omitempty"`
+}
+
+// OrchardAIConfig specifies optional Orchard AI connectivity.
+type OrchardAIConfig struct {
+	// API is the AI API endpoint Orchard should call
+	API string `json:"api"`
 }
 
 // PrometheusConfig specifies Prometheus metrics endpoint configuration

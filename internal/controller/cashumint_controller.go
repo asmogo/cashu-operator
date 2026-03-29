@@ -181,9 +181,31 @@ func (r *CashuMintReconciler) handleDeletion(ctx context.Context, cashuMint *min
 
 // reconcileResources handles the main reconciliation of all resources
 func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
+	r.transitionReconciliationPhase(cashuMint)
 
-	// Update phase to Provisioning if currently Pending
+	if err := r.reconcileOptionalMnemonic(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.reconcileOptionalPostgreSQL(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.reconcileOptionalBackup(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.reconcileCoreResources(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.reconcileOptionalIngressResources(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := r.updateDeploymentReadiness(ctx, cashuMint); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return reconcileResultForPhase(cashuMint.Status.Phase), nil
+}
+
+func (r *CashuMintReconciler) transitionReconciliationPhase(cashuMint *mintv1alpha1.CashuMint) {
 	if cashuMint.Status.Phase == mintv1alpha1.MintPhasePending {
 		cashuMint.Status.Phase = mintv1alpha1.MintPhaseProvisioning
 		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
@@ -196,9 +218,7 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Provisioning", "Starting resource provisioning")
 	}
 
-	// Check if spec has changed (generation mismatch)
 	if cashuMint.Status.ObservedGeneration != 0 && cashuMint.Status.ObservedGeneration != cashuMint.Generation {
-		logger.Info("Spec changed, updating resources")
 		cashuMint.Status.Phase = mintv1alpha1.MintPhaseUpdating
 		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
 			Type:               mintv1alpha1.ConditionTypeReady,
@@ -209,100 +229,219 @@ func (r *CashuMintReconciler) reconcileResources(ctx context.Context, cashuMint 
 		})
 		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Updating", "Spec changed, updating resources")
 	}
+}
 
-	// Phase 1: Reconcile PostgreSQL auto-provisioning (if needed)
-	if cashuMint.Spec.Database.Postgres != nil && cashuMint.Spec.Database.Postgres.AutoProvision {
-		logger.Info("Reconciling auto-provisioned PostgreSQL")
-		if err := r.reconcilePostgreSQL(ctx, cashuMint); err != nil {
-			r.Recorder.Event(cashuMint, corev1.EventTypeWarning, "PostgreSQLFailed", fmt.Sprintf("Failed to reconcile PostgreSQL: %v", err))
-			return ctrl.Result{}, fmt.Errorf("failed to reconcile PostgreSQL: %w", err)
-		}
+// reconcileOptionalMnemonic ensures a BIP39 mnemonic Secret exists when
+// spec.mintInfo.autoGenerateMnemonic is true and no mnemonicSecretRef is set.
+// The secret is created once and never overwritten so the mint key is stable.
+func (r *CashuMintReconciler) reconcileOptionalMnemonic(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if !cashuMint.Spec.MintInfo.AutoGenerateMnemonic || cashuMint.Spec.MintInfo.MnemonicSecretRef != nil {
+		return nil
 	}
 
-	// Phase 2: Reconcile backup resources (if enabled)
-	if cashuMint.Spec.Backup != nil && cashuMint.Spec.Backup.Enabled {
-		logger.Info("Reconciling backup resources")
-		if err := r.reconcileBackup(ctx, cashuMint); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to reconcile backup resources: %w", err)
-		}
+	logger := log.FromContext(ctx)
+	secretName := generators.MnemonicSecretName(cashuMint.Name)
+
+	existingSecret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: cashuMint.Namespace, Name: secretName}, existingSecret)
+	if err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get mnemonic secret: %w", err)
 	}
 
-	// Phase 3: Reconcile ConfigMap
+	if apierrors.IsNotFound(err) {
+		secret, genErr := generators.GenerateMnemonicSecret(cashuMint, r.Scheme, "")
+		if genErr != nil {
+			return fmt.Errorf("failed to generate mnemonic secret: %w", genErr)
+		}
+		if createErr := r.Create(ctx, secret); createErr != nil && !apierrors.IsAlreadyExists(createErr) {
+			return fmt.Errorf("failed to create mnemonic secret: %w", createErr)
+		}
+		logger.Info("Mnemonic secret created", "secret", secret.Name)
+		r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "MnemonicCreated", "Auto-generated BIP39 mnemonic secret created")
+	} else {
+		logger.Info("Mnemonic secret already exists, keeping existing mnemonic", "secret", secretName)
+	}
+
+	return nil
+}
+
+func (r *CashuMintReconciler) reconcileOptionalPostgreSQL(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if cashuMint.Spec.Database.Postgres == nil || !cashuMint.Spec.Database.Postgres.AutoProvision {
+		return nil
+	}
+
+	log.FromContext(ctx).Info("Reconciling auto-provisioned PostgreSQL")
+	if err := r.reconcilePostgreSQL(ctx, cashuMint); err != nil {
+		r.Recorder.Event(cashuMint, corev1.EventTypeWarning, "PostgreSQLFailed", fmt.Sprintf("Failed to reconcile PostgreSQL: %v", err))
+		return fmt.Errorf("failed to reconcile PostgreSQL: %w", err)
+	}
+	return nil
+}
+
+func (r *CashuMintReconciler) reconcileOptionalBackup(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if cashuMint.Spec.Backup == nil || !cashuMint.Spec.Backup.Enabled {
+		return nil
+	}
+
+	log.FromContext(ctx).Info("Reconciling backup resources")
+	if err := r.reconcileBackup(ctx, cashuMint); err != nil {
+		return fmt.Errorf("failed to reconcile backup resources: %w", err)
+	}
+	return nil
+}
+
+func (r *CashuMintReconciler) reconcileCoreResources(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	logger := log.FromContext(ctx)
+
+	logger.Info("Reconciling management RPC TLS")
+	if err := r.reconcileManagementRPCTLSSecret(ctx, cashuMint); err != nil {
+		return fmt.Errorf("failed to reconcile management RPC TLS secret: %w", err)
+	}
+
 	logger.Info("Reconciling ConfigMap")
 	if err := r.reconcileConfigMap(ctx, cashuMint); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to reconcile ConfigMap: %w", err)
+		return fmt.Errorf("failed to reconcile ConfigMap: %w", err)
 	}
 
-	// Phase 4: Reconcile PVC (for SQLite/redb)
-	if cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineSQLite || cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineRedb {
-		logger.Info("Reconciling PVC for local database")
+	if needsPVCReconciliation(cashuMint) {
+		logger.Info("Reconciling PVCs")
 		if err := r.reconcilePVC(ctx, cashuMint); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to reconcile PVC: %w", err)
+			return fmt.Errorf("failed to reconcile PVC: %w", err)
 		}
 	}
 
-	// Phase 5: Reconcile Deployment
 	logger.Info("Reconciling Deployment")
 	if err := r.reconcileDeployment(ctx, cashuMint); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to reconcile Deployment: %w", err)
+		return fmt.Errorf("failed to reconcile Deployment: %w", err)
 	}
 
-	// Phase 6: Reconcile Service
 	logger.Info("Reconciling Service")
 	if err := r.reconcileService(ctx, cashuMint); err != nil {
-		return ctrl.Result{}, fmt.Errorf("failed to reconcile Service: %w", err)
+		return fmt.Errorf("failed to reconcile Service: %w", err)
 	}
 
-	// Phase 7: Reconcile Ingress (if enabled)
-	if cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled {
-		logger.Info("Reconciling Ingress")
-		if err := r.reconcileIngress(ctx, cashuMint); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to reconcile Ingress: %w", err)
-		}
+	return nil
+}
 
-		// Phase 8: Reconcile Certificate (if cert-manager is enabled)
-		if cashuMint.Spec.Ingress.TLS != nil && cashuMint.Spec.Ingress.TLS.Enabled &&
-			cashuMint.Spec.Ingress.TLS.CertManager != nil && cashuMint.Spec.Ingress.TLS.CertManager.Enabled {
-			logger.Info("Reconciling Certificate")
-			if err := r.reconcileCertificate(ctx, cashuMint); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to reconcile Certificate: %w", err)
-			}
-		}
+func (r *CashuMintReconciler) reconcileManagementRPCTLSSecret(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if !mintv1alpha1.ManagementRPCTLSEnabled(&cashuMint.Spec) {
+		return nil
 	}
 
-	// Check deployment readiness and update phase
+	logger := log.FromContext(ctx)
+	secretName := mintv1alpha1.ManagementRPCTLSSecretName(&cashuMint.Spec, cashuMint.Name)
+	existingSecret := &corev1.Secret{}
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: cashuMint.Namespace,
+		Name:      secretName,
+	}, existingSecret)
+	if err == nil {
+		logger.Info("Management RPC TLS secret already exists", "secret", secretName)
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("failed to get management RPC TLS secret: %w", err)
+	}
+
+	secret, err := generators.GenerateManagementRPCTLSSecret(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate management RPC TLS secret: %w", err)
+	}
+	if secret == nil {
+		return nil
+	}
+	if err := r.Create(ctx, secret); err != nil && !apierrors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create management RPC TLS secret: %w", err)
+	}
+
+	logger.Info("Management RPC TLS secret created", "secret", secret.Name)
+	return nil
+}
+
+func (r *CashuMintReconciler) reconcileOptionalIngressResources(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if !needsIngressReconciliation(cashuMint) {
+		return nil
+	}
+
+	logger := log.FromContext(ctx)
+	logger.Info("Reconciling Ingress")
+	if err := r.reconcileIngress(ctx, cashuMint); err != nil {
+		return fmt.Errorf("failed to reconcile Ingress: %w", err)
+	}
+
+	if !needsCertificateReconciliation(cashuMint) {
+		return nil
+	}
+
+	logger.Info("Reconciling Certificate")
+	if err := r.reconcileCertificate(ctx, cashuMint); err != nil {
+		return fmt.Errorf("failed to reconcile Certificate: %w", err)
+	}
+	return nil
+}
+
+func (r *CashuMintReconciler) updateDeploymentReadiness(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	deployment := &appsv1.Deployment{}
-	if err := r.Get(ctx, client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}, deployment); err == nil {
-		if isDeploymentReady(deployment) {
-			// Only emit event if transitioning to Ready state
-			if cashuMint.Status.Phase != mintv1alpha1.MintPhaseReady {
-				r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Ready", "CashuMint is ready and operational")
-			}
-			cashuMint.Status.Phase = mintv1alpha1.MintPhaseReady
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeReady,
-				Status:             metav1.ConditionTrue,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "ReconciliationComplete",
-				Message:            "All resources reconciled successfully",
-			})
-		} else {
-			meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
-				Type:               mintv1alpha1.ConditionTypeReady,
-				Status:             metav1.ConditionFalse,
-				ObservedGeneration: cashuMint.Generation,
-				Reason:             "DeploymentNotReady",
-				Message:            "Waiting for deployment to be ready",
-			})
+	if err := r.Get(ctx, client.ObjectKey{Name: cashuMint.Name, Namespace: cashuMint.Namespace}, deployment); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
 		}
+		return fmt.Errorf("failed to get Deployment readiness: %w", err)
 	}
 
-	// Determine requeue interval
-	if cashuMint.Status.Phase == mintv1alpha1.MintPhaseUpdating || cashuMint.Status.Phase == mintv1alpha1.MintPhaseProvisioning {
-		return ctrl.Result{RequeueAfter: UpdateReconcileInterval}, nil
+	if isDeploymentReady(deployment) {
+		if cashuMint.Status.Phase != mintv1alpha1.MintPhaseReady {
+			r.Recorder.Event(cashuMint, corev1.EventTypeNormal, "Ready", "CashuMint is ready and operational")
+		}
+		cashuMint.Status.Phase = mintv1alpha1.MintPhaseReady
+		meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+			Type:               mintv1alpha1.ConditionTypeReady,
+			Status:             metav1.ConditionTrue,
+			ObservedGeneration: cashuMint.Generation,
+			Reason:             "ReconciliationComplete",
+			Message:            "All resources reconciled successfully",
+		})
+		return nil
 	}
 
-	return ctrl.Result{RequeueAfter: ReconcileInterval}, nil
+	meta.SetStatusCondition(&cashuMint.Status.Conditions, metav1.Condition{
+		Type:               mintv1alpha1.ConditionTypeReady,
+		Status:             metav1.ConditionFalse,
+		ObservedGeneration: cashuMint.Generation,
+		Reason:             "DeploymentNotReady",
+		Message:            "Waiting for deployment to be ready",
+	})
+	return nil
+}
+
+func needsPVCReconciliation(cashuMint *mintv1alpha1.CashuMint) bool {
+	return cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineSQLite ||
+		cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEngineRedb ||
+		(cashuMint.Spec.Orchard != nil && cashuMint.Spec.Orchard.Enabled)
+}
+
+func needsIngressReconciliation(cashuMint *mintv1alpha1.CashuMint) bool {
+	return (cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled) ||
+		(cashuMint.Spec.Orchard != nil && cashuMint.Spec.Orchard.Enabled &&
+			cashuMint.Spec.Orchard.Ingress != nil && cashuMint.Spec.Orchard.Ingress.Enabled)
+}
+
+func needsCertificateReconciliation(cashuMint *mintv1alpha1.CashuMint) bool {
+	mintNeedsCertificate := cashuMint.Spec.Ingress != nil && cashuMint.Spec.Ingress.Enabled &&
+		cashuMint.Spec.Ingress.TLS != nil && cashuMint.Spec.Ingress.TLS.Enabled &&
+		cashuMint.Spec.Ingress.TLS.CertManager != nil && cashuMint.Spec.Ingress.TLS.CertManager.Enabled
+	orchardNeedsCertificate := cashuMint.Spec.Orchard != nil && cashuMint.Spec.Orchard.Enabled &&
+		cashuMint.Spec.Orchard.Ingress != nil && cashuMint.Spec.Orchard.Ingress.Enabled &&
+		cashuMint.Spec.Orchard.Ingress.TLS != nil && cashuMint.Spec.Orchard.Ingress.TLS.Enabled &&
+		cashuMint.Spec.Orchard.Ingress.TLS.CertManager != nil && cashuMint.Spec.Orchard.Ingress.TLS.CertManager.Enabled
+	return mintNeedsCertificate || orchardNeedsCertificate
+}
+
+func reconcileResultForPhase(phase mintv1alpha1.MintPhase) ctrl.Result {
+	if phase == mintv1alpha1.MintPhaseUpdating || phase == mintv1alpha1.MintPhaseProvisioning {
+		return ctrl.Result{RequeueAfter: UpdateReconcileInterval}
+	}
+	return ctrl.Result{RequeueAfter: ReconcileInterval}
 }
 
 // handleError handles reconciliation errors
@@ -622,6 +761,18 @@ func (r *CashuMintReconciler) reconcilePVC(ctx context.Context, cashuMint *mintv
 		logger.Info("PVC reconciled", "pvc", pvc.Name)
 	}
 
+	orchardPVC, err := generators.GenerateOrchardPVC(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate Orchard PVC: %w", err)
+	}
+
+	if orchardPVC != nil {
+		if err := applyResource(ctx, r.Client, orchardPVC); err != nil {
+			return fmt.Errorf("failed to apply Orchard PVC: %w", err)
+		}
+		logger.Info("Orchard PVC reconciled", "pvc", orchardPVC.Name)
+	}
+
 	return nil
 }
 
@@ -669,6 +820,18 @@ func (r *CashuMintReconciler) reconcileService(ctx context.Context, cashuMint *m
 
 	logger.Info("Service reconciled", "service", service.Name)
 
+	orchardService, err := generators.GenerateOrchardService(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate Orchard Service: %w", err)
+	}
+
+	if orchardService != nil {
+		if err := applyResource(ctx, r.Client, orchardService); err != nil {
+			return fmt.Errorf("failed to apply Orchard Service: %w", err)
+		}
+		logger.Info("Orchard Service reconciled", "service", orchardService.Name)
+	}
+
 	return nil
 }
 
@@ -688,6 +851,18 @@ func (r *CashuMintReconciler) reconcileIngress(ctx context.Context, cashuMint *m
 		logger.Info("Ingress reconciled", "ingress", ingress.Name)
 	}
 
+	orchardIngress, err := generators.GenerateOrchardIngress(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate Orchard Ingress: %w", err)
+	}
+
+	if orchardIngress != nil {
+		if err := applyResource(ctx, r.Client, orchardIngress); err != nil {
+			return fmt.Errorf("failed to apply Orchard Ingress: %w", err)
+		}
+		logger.Info("Orchard Ingress reconciled", "ingress", orchardIngress.Name)
+	}
+
 	return nil
 }
 
@@ -705,6 +880,18 @@ func (r *CashuMintReconciler) reconcileCertificate(ctx context.Context, cashuMin
 			return fmt.Errorf("failed to apply Certificate: %w", err)
 		}
 		logger.Info("Certificate reconciled", "certificate", cert.Name)
+	}
+
+	orchardCert, err := generators.GenerateOrchardCertificate(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate Orchard Certificate: %w", err)
+	}
+
+	if orchardCert != nil {
+		if err := applyResource(ctx, r.Client, orchardCert); err != nil {
+			return fmt.Errorf("failed to apply Orchard Certificate: %w", err)
+		}
+		logger.Info("Orchard Certificate reconciled", "certificate", orchardCert.Name)
 	}
 
 	return nil

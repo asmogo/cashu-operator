@@ -72,7 +72,7 @@ func TestGenerateDeployment_DefaultImage(t *testing.T) {
 	if mintd == nil {
 		t.Fatal("mintd container not found")
 	}
-	if mintd.Image != "ghcr.io/cashubtc/cdk-mintd:latest" {
+	if mintd.Image != mintv1alpha1.DefaultMintImage {
 		t.Errorf("image = %q, want default", mintd.Image)
 	}
 	if mintd.ImagePullPolicy != corev1.PullIfNotPresent {
@@ -224,11 +224,8 @@ func TestGenerateDeployment_EnvVars(t *testing.T) {
 	if envMap["RUST_LOG"] != "debug" {
 		t.Error("RUST_LOG missing or wrong")
 	}
-	if envMap["LOG_LEVEL"] != "debug" {
-		t.Error("LOG_LEVEL missing or wrong")
-	}
-	if envMap["LOG_FORMAT"] != "json" {
-		t.Error("LOG_FORMAT missing or wrong")
+	if envMap["CDK_MINTD_LOGGING_CONSOLE_LEVEL"] != "debug" {
+		t.Error("CDK_MINTD_LOGGING_CONSOLE_LEVEL missing or wrong")
 	}
 
 	// Mnemonic should be from secret
@@ -260,12 +257,12 @@ func TestGenerateDeployment_PostgresURLSecretRef(t *testing.T) {
 	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
 	found := false
 	for _, e := range mintd.Env {
-		if e.Name == "CDK_MINTD_DATABASE_URL" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef.Name == "db-secret" {
+		if e.Name == "CDK_MINTD_POSTGRES_URL" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef.Name == "db-secret" {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("CDK_MINTD_DATABASE_URL secret ref missing")
+		t.Error("CDK_MINTD_POSTGRES_URL secret ref missing")
 	}
 }
 

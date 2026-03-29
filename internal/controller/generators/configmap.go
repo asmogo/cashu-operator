@@ -202,13 +202,15 @@ func writeDatabaseSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint, dbPas
 		} else if pg.URL != "" {
 			fmt.Fprintf(buf, "url = %q\n", pg.URL)
 		}
+		// Auto-provisioned postgres runs inside the cluster without TLS.
+		// Force disable regardless of the field value (the kubebuilder default
+		// of "require" is applied by the API server and would otherwise break
+		// connections to the internal StatefulSet).
 		tlsMode := pg.TLSMode
-		if tlsMode == "" {
-			if pg.AutoProvision {
-				tlsMode = "disable"
-			} else {
-				tlsMode = "require"
-			}
+		if pg.AutoProvision {
+			tlsMode = "disable"
+		} else if tlsMode == "" {
+			tlsMode = "require"
 		}
 		fmt.Fprintf(buf, "tls_mode = %q\n", tlsMode)
 		if pg.MaxConnections != nil {
@@ -443,7 +445,7 @@ func writeLDKNodeSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	}
 	webserverHost := ldk.WebserverHost
 	if webserverHost == "" {
-		webserverHost = "127.0.0.1"
+		webserverHost = mintv1alpha1.DefaultLoopbackHost
 	}
 	fmt.Fprintf(buf, "webserver_host = %q\n", webserverHost)
 	webserverPort := ldk.WebserverPort
@@ -504,9 +506,10 @@ func writeManagementRPCSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 		return
 	}
 	buf.WriteString("\n[mint_management_rpc]\n")
+	buf.WriteString("enabled = true\n")
 	address := mint.Spec.ManagementRPC.Address
 	if address == "" {
-		address = "127.0.0.1"
+		address = mintv1alpha1.DefaultLoopbackHost
 	}
 	fmt.Fprintf(buf, "address = %q\n", address)
 	port := mint.Spec.ManagementRPC.Port
@@ -514,6 +517,9 @@ func writeManagementRPCSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 		port = 8086
 	}
 	fmt.Fprintf(buf, "port = %d\n", port)
+	if mintv1alpha1.ManagementRPCTLSEnabled(&mint.Spec) {
+		fmt.Fprintf(buf, "tls_dir_path = %q\n", orchardManagementRPCTLSMountPath)
+	}
 }
 
 func writeLimitsSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {

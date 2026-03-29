@@ -3,7 +3,7 @@ kind: CashuMint
 metadata:
   name: cashumint-production
 spec:
-  image: ghcr.io/cashubtc/cdk-mintd:v0.15.0
+  image: cashubtc/mintd:0.15.0
   mintInfo:
     url: https://cashu.example.com
     name: "Example Cashu Mint"
