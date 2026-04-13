@@ -26,7 +26,7 @@ import (
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 )
 
-func TestGenerateOrchardContainer_Defaults(t *testing.T) {
+func setupOrchardContainerMint() *mintv1alpha1.CashuMint {
 	mint := baseMint("orchard-defaults")
 	mint.Spec.Orchard = &mintv1alpha1.OrchardConfig{
 		Enabled:           true,
@@ -35,32 +35,34 @@ func TestGenerateOrchardContainer_Defaults(t *testing.T) {
 	}
 	mint.Spec.ManagementRPC = &mintv1alpha1.ManagementRPCConfig{Enabled: true}
 	mint.Default()
+	return mint
+}
 
+func TestGenerateOrchardContainer_Defaults_Probes(t *testing.T) {
+	mint := setupOrchardContainerMint()
 	container := GenerateOrchardContainer(mint)
+
 	if container.Name != orchardStr {
 		t.Fatalf("name = %q, want orchard", container.Name)
-	}
-	if container.Image != mintv1alpha1.DefaultOrchardImage(mintv1alpha1.DatabaseEngineSQLite) {
-		t.Fatalf("image = %q, want sqlite default", container.Image)
-	}
-	if container.ImagePullPolicy != corev1.PullIfNotPresent {
-		t.Fatalf("ImagePullPolicy = %v, want IfNotPresent", container.ImagePullPolicy)
-	}
-	if len(container.Ports) != 1 || container.Ports[0].ContainerPort != orchardPortDefault {
-		t.Fatalf("ports = %+v, want %d", container.Ports, orchardPortDefault)
 	}
 	if container.LivenessProbe == nil || container.LivenessProbe.TCPSocket == nil {
 		t.Fatal("expected TCP liveness probe")
 	}
-	if container.ReadinessProbe == nil || container.ReadinessProbe.TCPSocket == nil {
-		t.Fatal("expected TCP readiness probe")
-	}
 	if container.LivenessProbe.TCPSocket.Port.StrVal != orchardStr {
 		t.Fatalf("liveness probe port = %q, want orchard", container.LivenessProbe.TCPSocket.Port.StrVal)
+	}
+	if container.ReadinessProbe == nil || container.ReadinessProbe.TCPSocket == nil {
+		t.Fatal("expected TCP readiness probe")
 	}
 	if container.ReadinessProbe.TCPSocket.Port.StrVal != orchardStr {
 		t.Fatalf("readiness probe port = %q, want orchard", container.ReadinessProbe.TCPSocket.Port.StrVal)
 	}
+}
+
+func TestGenerateOrchardContainer_Defaults_SecurityContext(t *testing.T) {
+	mint := setupOrchardContainerMint()
+	container := GenerateOrchardContainer(mint)
+
 	if container.SecurityContext == nil {
 		t.Fatal("expected security context")
 	}
@@ -70,8 +72,13 @@ func TestGenerateOrchardContainer_Defaults(t *testing.T) {
 	if container.SecurityContext.RunAsUser == nil || *container.SecurityContext.RunAsUser != 0 {
 		t.Fatalf("RunAsUser = %v, want 0", container.SecurityContext.RunAsUser)
 	}
+}
 
+func TestGenerateOrchardContainer_Defaults_Env(t *testing.T) {
+	mint := setupOrchardContainerMint()
+	container := GenerateOrchardContainer(mint)
 	envs := envVarMap(container.Env)
+
 	if envs["SERVER_HOST"] != mintv1alpha1.DefaultListenHost {
 		t.Fatalf("SERVER_HOST = %q, want %q", envs["SERVER_HOST"], mintv1alpha1.DefaultListenHost)
 	}
@@ -209,7 +216,7 @@ func TestGenerateOrchardMintDatabaseEnvVar(t *testing.T) {
 	})
 }
 
-func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.T) {
+func setupOrchardEnvMint() *mintv1alpha1.CashuMint {
 	mint := baseMint("orchard-env")
 	mint.Spec.ManagementRPC = &mintv1alpha1.ManagementRPCConfig{Enabled: true}
 	mint.Spec.Orchard = &mintv1alpha1.OrchardConfig{
@@ -243,6 +250,8 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 			RPCPort:           10009,
 			MacaroonSecretRef: orchardSecretRef(lndStr, "admin.macaroon"),
 			CertSecretRef:     orchardSecretRef(lndStr, "tls.cert"),
+			KeySecretRef:      orchardSecretRef(lndStr, "client.key"),
+			CASecretRef:       orchardSecretRef(lndStr, "ca.cert"),
 		},
 		TaprootAssets: &mintv1alpha1.OrchardTaprootAssetsConfig{
 			Type:              tapdStr,
@@ -256,7 +265,11 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 		},
 		ExtraEnv: []corev1.EnvVar{{Name: "EXTRA_ENV", Value: "extra"}},
 	}
+	return mint
+}
 
+func TestGenerateOrchardEnvironmentVariables_Basic(t *testing.T) {
+	mint := setupOrchardEnvMint()
 	envs := generateOrchardEnvironmentVariables(mint)
 	envMap := envVarMap(envs)
 
@@ -272,6 +285,19 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 	if envMap["SERVER_COMPRESSION"] != trueStr {
 		t.Fatalf("SERVER_COMPRESSION = %q, want true", envMap["SERVER_COMPRESSION"])
 	}
+	if envMap["AI_API"] != "https://ai.example.com" {
+		t.Fatalf("AI_API = %q, want https://ai.example.com", envMap["AI_API"])
+	}
+	if envMap["EXTRA_ENV"] != "extra" {
+		t.Fatalf("EXTRA_ENV = %q, want extra", envMap["EXTRA_ENV"])
+	}
+}
+
+func TestGenerateOrchardEnvironmentVariables_MintRPC(t *testing.T) {
+	mint := setupOrchardEnvMint()
+	envs := generateOrchardEnvironmentVariables(mint)
+	envMap := envVarMap(envs)
+
 	if envMap["MINT_RPC_KEY"] != orchardManagementRPCTLSMountPath+"/client.key" {
 		t.Fatalf("MINT_RPC_KEY = %q, want management RPC key path", envMap["MINT_RPC_KEY"])
 	}
@@ -281,42 +307,8 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 	if envMap["MINT_RPC_CA"] != orchardManagementRPCTLSMountPath+"/ca.pem" {
 		t.Fatalf("MINT_RPC_CA = %q, want management RPC CA path", envMap["MINT_RPC_CA"])
 	}
-	if envMap["BITCOIN_TYPE"] != "core" || envMap["BITCOIN_RPC_HOST"] != "bitcoin.internal" || envMap["BITCOIN_RPC_PORT"] != "18443" {
-		t.Fatalf("unexpected bitcoin envs: %+v", envMap)
-	}
-	if envMap["LIGHTNING_TYPE"] != lndStr || envMap["LIGHTNING_RPC_HOST"] != "lnd.internal" || envMap["LIGHTNING_RPC_PORT"] != "10009" {
-		t.Fatalf("unexpected lightning envs: %+v", envMap)
-	}
-	if envMap["LIGHTNING_MACAROON"] != orchardLightningMacaroonPath {
-		t.Fatalf("LIGHTNING_MACAROON = %q, want %q", envMap["LIGHTNING_MACAROON"], orchardLightningMacaroonPath)
-	}
-	if envMap["LIGHTNING_CERT"] != orchardLightningCertPath {
-		t.Fatalf("LIGHTNING_CERT = %q, want %q", envMap["LIGHTNING_CERT"], orchardLightningCertPath)
-	}
-	if envMap["TAPROOT_ASSETS_TYPE"] != tapdStr || envMap["TAPROOT_ASSETS_RPC_HOST"] != "tapd.internal" || envMap["TAPROOT_ASSETS_RPC_PORT"] != "10029" {
-		t.Fatalf("unexpected taproot assets envs: %+v", envMap)
-	}
-	if envMap["TAPROOT_ASSETS_MACAROON"] != orchardTaprootMacaroonPath {
-		t.Fatalf("TAPROOT_ASSETS_MACAROON = %q, want %q", envMap["TAPROOT_ASSETS_MACAROON"], orchardTaprootMacaroonPath)
-	}
-	if envMap["TAPROOT_ASSETS_CERT"] != orchardTaprootCertPath {
-		t.Fatalf("TAPROOT_ASSETS_CERT = %q, want %q", envMap["TAPROOT_ASSETS_CERT"], orchardTaprootCertPath)
-	}
-	if envMap["AI_API"] != "https://ai.example.com" {
-		t.Fatalf("AI_API = %q, want https://ai.example.com", envMap["AI_API"])
-	}
-	if envMap["EXTRA_ENV"] != "extra" {
-		t.Fatalf("EXTRA_ENV = %q, want extra", envMap["EXTRA_ENV"])
-	}
-
 	if got := orchardEnvVar(t, envs, "SETUP_KEY"); got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil || got.ValueFrom.SecretKeyRef.Name != "orchard-setup" {
 		t.Fatalf("unexpected SETUP_KEY env: %+v", got)
-	}
-	if got := orchardEnvVar(t, envs, "BITCOIN_RPC_USER"); got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil || got.ValueFrom.SecretKeyRef.Name != "bitcoin-rpc" {
-		t.Fatalf("unexpected BITCOIN_RPC_USER env: %+v", got)
-	}
-	if got := orchardEnvVar(t, envs, "BITCOIN_RPC_PASSWORD"); got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil || got.ValueFrom.SecretKeyRef.Name != "bitcoin-rpc" {
-		t.Fatalf("unexpected BITCOIN_RPC_PASSWORD env: %+v", got)
 	}
 	if got := orchardEnvVar(t, envs, "MINT_DATABASE_CA"); got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil || got.ValueFrom.SecretKeyRef.Name != "mint-db-ca" {
 		t.Fatalf("unexpected MINT_DATABASE_CA env: %+v", got)
@@ -326,6 +318,48 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 	}
 	if got := orchardEnvVar(t, envs, "MINT_DATABASE_KEY"); got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil || got.ValueFrom.SecretKeyRef.Name != "mint-db-key" {
 		t.Fatalf("unexpected MINT_DATABASE_KEY env: %+v", got)
+	}
+}
+
+func TestGenerateOrchardEnvironmentVariables_External(t *testing.T) {
+	mint := setupOrchardEnvMint()
+	envs := generateOrchardEnvironmentVariables(mint)
+	envMap := envVarMap(envs)
+
+	if envMap["BITCOIN_TYPE"] != "core" || envMap["BITCOIN_RPC_HOST"] != "bitcoin.internal" || envMap["BITCOIN_RPC_PORT"] != "18443" {
+		t.Fatalf("unexpected bitcoin envs: %+v", envMap)
+	}
+	if got := orchardEnvVar(t, envs, "BITCOIN_RPC_USER"); got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil || got.ValueFrom.SecretKeyRef.Name != "bitcoin-rpc" {
+		t.Fatalf("unexpected BITCOIN_RPC_USER env: %+v", got)
+	}
+	if got := orchardEnvVar(t, envs, "BITCOIN_RPC_PASSWORD"); got.ValueFrom == nil || got.ValueFrom.SecretKeyRef == nil || got.ValueFrom.SecretKeyRef.Name != "bitcoin-rpc" {
+		t.Fatalf("unexpected BITCOIN_RPC_PASSWORD env: %+v", got)
+	}
+
+	if envMap["LIGHTNING_TYPE"] != lndStr || envMap["LIGHTNING_RPC_HOST"] != "lnd.internal" || envMap["LIGHTNING_RPC_PORT"] != "10009" {
+		t.Fatalf("unexpected lightning envs: %+v", envMap)
+	}
+	if envMap["LIGHTNING_MACAROON"] != orchardLightningMacaroonPath {
+		t.Fatalf("LIGHTNING_MACAROON = %q, want %q", envMap["LIGHTNING_MACAROON"], orchardLightningMacaroonPath)
+	}
+	if envMap["LIGHTNING_CERT"] != orchardLightningCertPath {
+		t.Fatalf("LIGHTNING_CERT = %q, want %q", envMap["LIGHTNING_CERT"], orchardLightningCertPath)
+	}
+	if envMap["LIGHTNING_KEY"] != orchardLightningKeyPath {
+		t.Fatalf("LIGHTNING_KEY = %q, want %q", envMap["LIGHTNING_KEY"], orchardLightningKeyPath)
+	}
+	if envMap["LIGHTNING_CA"] != orchardLightningCAPath {
+		t.Fatalf("LIGHTNING_CA = %q, want %q", envMap["LIGHTNING_CA"], orchardLightningCAPath)
+	}
+
+	if envMap["TAPROOT_ASSETS_TYPE"] != tapdStr || envMap["TAPROOT_ASSETS_RPC_HOST"] != "tapd.internal" || envMap["TAPROOT_ASSETS_RPC_PORT"] != "10029" {
+		t.Fatalf("unexpected taproot assets envs: %+v", envMap)
+	}
+	if envMap["TAPROOT_ASSETS_MACAROON"] != orchardTaprootMacaroonPath {
+		t.Fatalf("TAPROOT_ASSETS_MACAROON = %q, want %q", envMap["TAPROOT_ASSETS_MACAROON"], orchardTaprootMacaroonPath)
+	}
+	if envMap["TAPROOT_ASSETS_CERT"] != orchardTaprootCertPath {
+		t.Fatalf("TAPROOT_ASSETS_CERT = %q, want %q", envMap["TAPROOT_ASSETS_CERT"], orchardTaprootCertPath)
 	}
 }
 

@@ -67,7 +67,7 @@ func TestWritePaymentBackendSection_CoversOptionalFields(t *testing.T) {
 		var buf bytes.Buffer
 		writePaymentBackendSection(&buf, mint)
 		config := buf.String()
-		assertContains(t, config, `ln_backend = lndStr`)
+		assertContains(t, config, "ln_backend = \""+lndStr+"\"")
 		assertContains(t, config, "min_melt = 5")
 		assertContains(t, config, "max_melt = 50")
 		assertContains(t, config, `macaroon_file = "/secrets/lnd/macaroon"`)

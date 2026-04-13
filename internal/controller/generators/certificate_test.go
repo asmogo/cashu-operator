@@ -24,6 +24,8 @@ import (
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 )
 
+const letsencryptProd = "letsencrypt-prod"
+
 func TestGenerateCertificate_Disabled(t *testing.T) {
 	scheme := testScheme(t)
 
@@ -118,7 +120,7 @@ func TestGenerateCertificate_FullConfig(t *testing.T) {
 					SecretName: "custom-tls-secret",
 					CertManager: &mintv1alpha1.CertManagerConfig{
 						Enabled:    true,
-						IssuerName: "letsencrypt-prod",
+						IssuerName: letsencryptProd,
 						IssuerKind: "Issuer",
 					},
 				},
@@ -142,8 +144,8 @@ func TestGenerateCertificate_FullConfig(t *testing.T) {
 	if len(cert.Spec.DNSNames) != 1 || cert.Spec.DNSNames[0] != "mint.example.com" {
 		t.Errorf("dnsNames = %v, want [mint.example.com]", cert.Spec.DNSNames)
 	}
-	if cert.Spec.IssuerRef.Name != "letsencrypt-prod" {
-		t.Errorf("issuerRef.name = %q, want %q", cert.Spec.IssuerRef.Name, "letsencrypt-prod")
+	if cert.Spec.IssuerRef.Name != letsencryptProd {
+		t.Errorf("issuerRef.name = %q, want %q", cert.Spec.IssuerRef.Name, letsencryptProd)
 	}
 	if cert.Spec.IssuerRef.Kind != "Issuer" {
 		t.Errorf("issuerRef.kind = %q, want %q", cert.Spec.IssuerRef.Kind, "Issuer")
