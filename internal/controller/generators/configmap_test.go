@@ -108,7 +108,7 @@ func TestGenerateConfigMap_LND(t *testing.T) {
 
 	cm, _ := GenerateConfigMap(mint, scheme, "")
 	config := cm.Data["config.toml"]
-	assertContains(t, config, `ln_backend = "lnd"`)
+	assertContains(t, config, `ln_backend = lndStr`)
 	assertContains(t, config, `[lnd]`)
 	assertContains(t, config, `address = "https://lnd:10009"`)
 }

@@ -112,7 +112,7 @@ func GenerateOrchardCertificate(mint *mintv1alpha1.CashuMint, scheme *runtime.Sc
 	labels := map[string]string{
 		"app.kubernetes.io/name":       "cashu-mint",
 		"app.kubernetes.io/instance":   mint.Name,
-		"app.kubernetes.io/component":  "orchard",
+		"app.kubernetes.io/component":  orchardStr,
 		"app.kubernetes.io/managed-by": "cashu-operator",
 	}
 

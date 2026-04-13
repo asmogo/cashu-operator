@@ -453,7 +453,7 @@ func mintManagementRPCEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 		rpcAddress = mintv1alpha1.DefaultLoopbackHost
 	}
 	vars := []corev1.EnvVar{
-		{Name: "CDK_MINTD_MINT_MANAGEMENT_ENABLED", Value: "true"},
+		{Name: "CDK_MINTD_MINT_MANAGEMENT_ENABLED", Value: trueStr},
 		{Name: "CDK_MINTD_MANAGEMENT_ADDRESS", Value: rpcAddress},
 		{Name: "CDK_MINTD_MANAGEMENT_PORT", Value: fmt.Sprintf("%d", rpcPort)},
 	}

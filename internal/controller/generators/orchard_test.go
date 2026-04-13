@@ -37,7 +37,7 @@ func TestGenerateOrchardContainer_Defaults(t *testing.T) {
 	mint.Default()
 
 	container := GenerateOrchardContainer(mint)
-	if container.Name != "orchard" {
+	if container.Name != orchardStr {
 		t.Fatalf("name = %q, want orchard", container.Name)
 	}
 	if container.Image != mintv1alpha1.DefaultOrchardImage(mintv1alpha1.DatabaseEngineSQLite) {
@@ -55,10 +55,10 @@ func TestGenerateOrchardContainer_Defaults(t *testing.T) {
 	if container.ReadinessProbe == nil || container.ReadinessProbe.TCPSocket == nil {
 		t.Fatal("expected TCP readiness probe")
 	}
-	if container.LivenessProbe.TCPSocket.Port.StrVal != "orchard" {
+	if container.LivenessProbe.TCPSocket.Port.StrVal != orchardStr {
 		t.Fatalf("liveness probe port = %q, want orchard", container.LivenessProbe.TCPSocket.Port.StrVal)
 	}
-	if container.ReadinessProbe.TCPSocket.Port.StrVal != "orchard" {
+	if container.ReadinessProbe.TCPSocket.Port.StrVal != orchardStr {
 		t.Fatalf("readiness probe port = %q, want orchard", container.ReadinessProbe.TCPSocket.Port.StrVal)
 	}
 	if container.SecurityContext == nil {
@@ -96,7 +96,7 @@ func TestGenerateOrchardContainer_Defaults(t *testing.T) {
 	if envs["MINT_RPC_PORT"] != "8086" {
 		t.Fatalf("MINT_RPC_PORT = %q, want 8086", envs["MINT_RPC_PORT"])
 	}
-	if envs["MINT_RPC_MTLS"] != "true" {
+	if envs["MINT_RPC_MTLS"] != trueStr {
 		t.Fatalf("MINT_RPC_MTLS = %q, want true", envs["MINT_RPC_MTLS"])
 	}
 	if envs["MINT_DATABASE"] != orchardMintSQLitePath {
@@ -238,18 +238,18 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 			RPCPasswordSecretRef: orchardSecretRef("bitcoin-rpc", "rpcpassword"),
 		},
 		Lightning: &mintv1alpha1.OrchardLightningConfig{
-			Type:              "lnd",
+			Type:              lndStr,
 			RPCHost:           "lnd.internal",
 			RPCPort:           10009,
-			MacaroonSecretRef: orchardSecretRef("lnd", "admin.macaroon"),
-			CertSecretRef:     orchardSecretRef("lnd", "tls.cert"),
+			MacaroonSecretRef: orchardSecretRef(lndStr, "admin.macaroon"),
+			CertSecretRef:     orchardSecretRef(lndStr, "tls.cert"),
 		},
 		TaprootAssets: &mintv1alpha1.OrchardTaprootAssetsConfig{
-			Type:              "tapd",
+			Type:              tapdStr,
 			RPCHost:           "tapd.internal",
 			RPCPort:           10029,
-			MacaroonSecretRef: orchardSecretRef("tapd", "admin.macaroon"),
-			CertSecretRef:     orchardSecretRef("tapd", "tls.cert"),
+			MacaroonSecretRef: orchardSecretRef(tapdStr, "admin.macaroon"),
+			CertSecretRef:     orchardSecretRef(tapdStr, "tls.cert"),
 		},
 		AI: &mintv1alpha1.OrchardAIConfig{
 			API: "https://ai.example.com",
@@ -269,7 +269,7 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 	if envMap["TOR_PROXY_SERVER"] != "socks5://tor:9050" {
 		t.Fatalf("TOR_PROXY_SERVER = %q, want socks5 proxy", envMap["TOR_PROXY_SERVER"])
 	}
-	if envMap["SERVER_COMPRESSION"] != "true" {
+	if envMap["SERVER_COMPRESSION"] != trueStr {
 		t.Fatalf("SERVER_COMPRESSION = %q, want true", envMap["SERVER_COMPRESSION"])
 	}
 	if envMap["MINT_RPC_KEY"] != orchardManagementRPCTLSMountPath+"/client.key" {
@@ -284,7 +284,7 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 	if envMap["BITCOIN_TYPE"] != "core" || envMap["BITCOIN_RPC_HOST"] != "bitcoin.internal" || envMap["BITCOIN_RPC_PORT"] != "18443" {
 		t.Fatalf("unexpected bitcoin envs: %+v", envMap)
 	}
-	if envMap["LIGHTNING_TYPE"] != "lnd" || envMap["LIGHTNING_RPC_HOST"] != "lnd.internal" || envMap["LIGHTNING_RPC_PORT"] != "10009" {
+	if envMap["LIGHTNING_TYPE"] != lndStr || envMap["LIGHTNING_RPC_HOST"] != "lnd.internal" || envMap["LIGHTNING_RPC_PORT"] != "10009" {
 		t.Fatalf("unexpected lightning envs: %+v", envMap)
 	}
 	if envMap["LIGHTNING_MACAROON"] != orchardLightningMacaroonPath {
@@ -293,7 +293,7 @@ func TestGenerateOrchardEnvironmentVariables_WithOptionalConnections(t *testing.
 	if envMap["LIGHTNING_CERT"] != orchardLightningCertPath {
 		t.Fatalf("LIGHTNING_CERT = %q, want %q", envMap["LIGHTNING_CERT"], orchardLightningCertPath)
 	}
-	if envMap["TAPROOT_ASSETS_TYPE"] != "tapd" || envMap["TAPROOT_ASSETS_RPC_HOST"] != "tapd.internal" || envMap["TAPROOT_ASSETS_RPC_PORT"] != "10029" {
+	if envMap["TAPROOT_ASSETS_TYPE"] != tapdStr || envMap["TAPROOT_ASSETS_RPC_HOST"] != "tapd.internal" || envMap["TAPROOT_ASSETS_RPC_PORT"] != "10029" {
 		t.Fatalf("unexpected taproot assets envs: %+v", envMap)
 	}
 	if envMap["TAPROOT_ASSETS_MACAROON"] != orchardTaprootMacaroonPath {
@@ -349,8 +349,8 @@ func TestGenerateOrchardVolumeMounts_WithMTLSAndSecrets(t *testing.T) {
 		TaprootAssets: &mintv1alpha1.OrchardTaprootAssetsConfig{
 			RPCHost:           "tapd.internal",
 			RPCPort:           10029,
-			MacaroonSecretRef: orchardSecretRef("tapd", "admin.macaroon"),
-			CertSecretRef:     orchardSecretRef("tapd", "tls.cert"),
+			MacaroonSecretRef: orchardSecretRef(tapdStr, "admin.macaroon"),
+			CertSecretRef:     orchardSecretRef(tapdStr, "tls.cert"),
 		},
 	}
 
@@ -398,17 +398,17 @@ func TestGenerateOrchardVolumes(t *testing.T) {
 		mint.Spec.Orchard = &mintv1alpha1.OrchardConfig{
 			Enabled: true,
 			Lightning: &mintv1alpha1.OrchardLightningConfig{
-				Type:              "lnd",
+				Type:              lndStr,
 				RPCHost:           "lnd.internal",
 				RPCPort:           10009,
-				MacaroonSecretRef: orchardSecretRef("lnd", "admin.macaroon"),
-				CertSecretRef:     orchardSecretRef("lnd", "tls.cert"),
+				MacaroonSecretRef: orchardSecretRef(lndStr, "admin.macaroon"),
+				CertSecretRef:     orchardSecretRef(lndStr, "tls.cert"),
 			},
 			TaprootAssets: &mintv1alpha1.OrchardTaprootAssetsConfig{
 				RPCHost:           "tapd.internal",
 				RPCPort:           10029,
-				MacaroonSecretRef: orchardSecretRef("tapd", "admin.macaroon"),
-				CertSecretRef:     orchardSecretRef("tapd", "tls.cert"),
+				MacaroonSecretRef: orchardSecretRef(tapdStr, "admin.macaroon"),
+				CertSecretRef:     orchardSecretRef(tapdStr, "tls.cert"),
 			},
 		}
 
@@ -422,16 +422,16 @@ func TestGenerateOrchardVolumes(t *testing.T) {
 		if got := orchardVolume(t, volumes, orchardTmpVolumeName); got.EmptyDir == nil {
 			t.Fatalf("unexpected orchard tmp volume: %+v", got)
 		}
-		if got := orchardVolume(t, volumes, orchardLightningMacaroonVolumeName); got.Secret == nil || got.Secret.SecretName != "lnd" {
+		if got := orchardVolume(t, volumes, orchardLightningMacaroonVolumeName); got.Secret == nil || got.Secret.SecretName != lndStr {
 			t.Fatalf("unexpected lightning macaroon volume: %+v", got)
 		}
-		if got := orchardVolume(t, volumes, orchardLightningCertVolumeName); got.Secret == nil || got.Secret.SecretName != "lnd" {
+		if got := orchardVolume(t, volumes, orchardLightningCertVolumeName); got.Secret == nil || got.Secret.SecretName != lndStr {
 			t.Fatalf("unexpected lightning cert volume: %+v", got)
 		}
-		if got := orchardVolume(t, volumes, orchardTaprootMacaroonVolumeName); got.Secret == nil || got.Secret.SecretName != "tapd" {
+		if got := orchardVolume(t, volumes, orchardTaprootMacaroonVolumeName); got.Secret == nil || got.Secret.SecretName != tapdStr {
 			t.Fatalf("unexpected taproot macaroon volume: %+v", got)
 		}
-		if got := orchardVolume(t, volumes, orchardTaprootCertVolumeName); got.Secret == nil || got.Secret.SecretName != "tapd" {
+		if got := orchardVolume(t, volumes, orchardTaprootCertVolumeName); got.Secret == nil || got.Secret.SecretName != tapdStr {
 			t.Fatalf("unexpected taproot cert volume: %+v", got)
 		}
 	})
@@ -441,7 +441,7 @@ func TestGenerateOrchardPVC(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("orchard-pvc")
 	mint.UID = types.UID("orchard-pvc-uid")
-	storageClass := "fast-ssd"
+	storageClass := fastSSD
 	mint.Spec.Orchard = &mintv1alpha1.OrchardConfig{
 		Enabled: true,
 		Storage: &mintv1alpha1.StorageConfig{
@@ -466,11 +466,11 @@ func TestGenerateOrchardPVC(t *testing.T) {
 	if actual := pvc.Spec.Resources.Requests[corev1.ResourceStorage]; !actual.Equal(resource.MustParse("20Gi")) {
 		t.Fatalf("storage request = %s, want 20Gi", actual.String())
 	}
-	if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "fast-ssd" {
+	if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != fastSSD {
 		t.Fatalf("StorageClassName = %v, want fast-ssd", pvc.Spec.StorageClassName)
 	}
 	assertLabelsContain(t, pvc.Labels, "app.kubernetes.io/instance", "orchard-pvc")
-	assertLabelsContain(t, pvc.Labels, "app.kubernetes.io/component", "orchard")
+	assertLabelsContain(t, pvc.Labels, "app.kubernetes.io/component", orchardStr)
 	if len(pvc.OwnerReferences) != 1 || pvc.OwnerReferences[0].Name != mint.Name {
 		t.Fatalf("unexpected owner refs: %+v", pvc.OwnerReferences)
 	}
@@ -513,7 +513,7 @@ func TestGenerateOrchardService(t *testing.T) {
 				Type:           corev1.ServiceTypeLoadBalancer,
 				LoadBalancerIP: "10.0.0.25",
 				Annotations: map[string]string{
-					"example.com/expose": "true",
+					"example.com/expose": trueStr,
 				},
 			},
 		}
@@ -528,7 +528,7 @@ func TestGenerateOrchardService(t *testing.T) {
 		if service.Spec.LoadBalancerIP != "10.0.0.25" {
 			t.Fatalf("LoadBalancerIP = %q, want 10.0.0.25", service.Spec.LoadBalancerIP)
 		}
-		if service.Annotations["example.com/expose"] != "true" {
+		if service.Annotations["example.com/expose"] != trueStr {
 			t.Fatalf("annotations = %+v, want custom annotation", service.Annotations)
 		}
 		if len(service.Spec.Ports) != 1 || service.Spec.Ports[0].Port != 4444 {
@@ -563,7 +563,7 @@ func TestGenerateOrchardIngress(t *testing.T) {
 				Enabled: true,
 				Host:    "orchard.example.com",
 				Annotations: map[string]string{
-					"example.com/custom": "true",
+					"example.com/custom": trueStr,
 				},
 				TLS: &mintv1alpha1.IngressTLSConfig{
 					Enabled: true,
@@ -607,7 +607,7 @@ func TestGenerateOrchardIngress(t *testing.T) {
 		if ingress.Annotations["cert-manager.io/issuer-kind"] != mintv1alpha1.DefaultClusterIssuerKind {
 			t.Fatalf("annotations = %+v, want default issuer kind", ingress.Annotations)
 		}
-		if ingress.Annotations["example.com/custom"] != "true" {
+		if ingress.Annotations["example.com/custom"] != trueStr {
 			t.Fatalf("annotations = %+v, want custom annotation", ingress.Annotations)
 		}
 		if len(ingress.OwnerReferences) != 1 || ingress.OwnerReferences[0].Name != mint.Name {

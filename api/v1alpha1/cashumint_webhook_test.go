@@ -276,7 +276,7 @@ func TestDefault_ManagementRPC(t *testing.T) {
 	}
 }
 
-func TestDefault_Orchard(t *testing.T) {
+func setupOrchardMintForTest() *CashuMint {
 	m := validMint()
 	m.Spec.ManagementRPC = nil
 	m.Spec.Orchard = &OrchardConfig{
@@ -297,9 +297,12 @@ func TestDefault_Orchard(t *testing.T) {
 			},
 		},
 	}
-
 	m.Default()
+	return m
+}
 
+func TestDefault_Orchard_BasicProperties(t *testing.T) {
+	m := setupOrchardMintForTest()
 	if m.Spec.Orchard.Image != DefaultOrchardImage(DatabaseEnginePostgres) {
 		t.Errorf("image = %q, want postgres orchard default", m.Spec.Orchard.Image)
 	}
@@ -318,6 +321,10 @@ func TestDefault_Orchard(t *testing.T) {
 	if m.Spec.Orchard.LogLevel != "warn" {
 		t.Errorf("logLevel = %q, want warn", m.Spec.Orchard.LogLevel)
 	}
+}
+
+func TestDefault_Orchard_ThrottleAndStorage(t *testing.T) {
+	m := setupOrchardMintForTest()
 	if m.Spec.Orchard.ThrottleTTL == nil || *m.Spec.Orchard.ThrottleTTL != 60000 {
 		t.Errorf("throttleTTL = %v, want 60000", m.Spec.Orchard.ThrottleTTL)
 	}
@@ -330,6 +337,10 @@ func TestDefault_Orchard(t *testing.T) {
 	if m.Spec.Orchard.Service == nil || m.Spec.Orchard.Service.Type != corev1.ServiceTypeClusterIP {
 		t.Errorf("service = %+v, want ClusterIP", m.Spec.Orchard.Service)
 	}
+}
+
+func TestDefault_Orchard_MintAndRPC(t *testing.T) {
+	m := setupOrchardMintForTest()
 	if m.Spec.Orchard.Mint == nil || m.Spec.Orchard.Mint.Type != "cdk" {
 		t.Errorf("mint = %+v, want type cdk", m.Spec.Orchard.Mint)
 	}
@@ -345,6 +356,10 @@ func TestDefault_Orchard(t *testing.T) {
 	if m.Spec.Orchard.Mint.RPC.MTLS == nil || !*m.Spec.Orchard.Mint.RPC.MTLS {
 		t.Errorf("mint RPC mTLS = %v, want true", m.Spec.Orchard.Mint.RPC.MTLS)
 	}
+}
+
+func TestDefault_Orchard_Integrations(t *testing.T) {
+	m := setupOrchardMintForTest()
 	if m.Spec.Orchard.Bitcoin == nil || m.Spec.Orchard.Bitcoin.Type != "core" {
 		t.Errorf("bitcoin = %+v, want default type core", m.Spec.Orchard.Bitcoin)
 	}

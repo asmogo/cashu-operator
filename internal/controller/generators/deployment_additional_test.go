@@ -77,7 +77,7 @@ func TestGenerateEnvironmentVariables_UsesRedisSecretWhenProvided(t *testing.T) 
 }
 
 func TestGenerateVolumeMounts_CoversBackendSecrets(t *testing.T) {
-	t.Run("lnd", func(t *testing.T) {
+	t.Run(lndStr, func(t *testing.T) {
 		mint := baseMint("lnd-mounts")
 		mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{
 			LND: &mintv1alpha1.LNDConfig{
@@ -107,7 +107,7 @@ func TestGenerateVolumeMounts_CoversBackendSecrets(t *testing.T) {
 }
 
 func TestGenerateVolumes_CoversBackendSecretVolumes(t *testing.T) {
-	t.Run("lnd", func(t *testing.T) {
+	t.Run(lndStr, func(t *testing.T) {
 		mint := baseMint("lnd-volumes")
 		mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{
 			LND: &mintv1alpha1.LNDConfig{

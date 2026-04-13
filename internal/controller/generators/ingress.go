@@ -47,9 +47,9 @@ func GenerateIngress(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*net
 
 	// Default annotations for nginx ingress
 	annotations := map[string]string{
-		"nginx.ingress.kubernetes.io/ssl-redirect":      "true",
+		"nginx.ingress.kubernetes.io/ssl-redirect":      trueStr,
 		"nginx.ingress.kubernetes.io/backend-protocol":  "HTTP",
-		"nginx.ingress.kubernetes.io/enable-cors":       "true",
+		"nginx.ingress.kubernetes.io/enable-cors":       trueStr,
 		"nginx.ingress.kubernetes.io/cors-allow-origin": "*",
 	}
 

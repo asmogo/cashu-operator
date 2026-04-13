@@ -230,7 +230,7 @@ func TestGeneratePostgresStatefulSet_CustomSpec(t *testing.T) {
 					AutoProvisionSpec: &mintv1alpha1.PostgresAutoProvisionSpec{
 						StorageSize:      "50Gi",
 						Version:          "16",
-						StorageClassName: stringPtr("fast-ssd"),
+						StorageClassName: stringPtr(fastSSD),
 						Resources: &corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("500m"),
@@ -259,7 +259,6 @@ func TestGeneratePostgresStatefulSet_CustomSpec(t *testing.T) {
 	}
 
 	// Custom storage class
-	const fastSSD = "fast-ssd"
 	sc := sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName
 	if sc == nil || *sc != fastSSD {
 		t.Errorf("storageClassName = %v, want fast-ssd", sc)

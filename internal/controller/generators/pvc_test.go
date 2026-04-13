@@ -107,7 +107,7 @@ func TestGeneratePVC(t *testing.T) {
 	})
 
 	t.Run("custom size and storage class", func(t *testing.T) {
-		storageClass := "fast-ssd"
+		storageClass := fastSSD
 		mint := &mintv1alpha1.CashuMint{
 			ObjectMeta: metav1.ObjectMeta{Name: "custom-mint", Namespace: "default"},
 			Spec: mintv1alpha1.CashuMintSpec{
@@ -133,8 +133,8 @@ func TestGeneratePVC(t *testing.T) {
 			t.Errorf("storage size = %s, want %s", actualSize.String(), expectedSize.String())
 		}
 
-		if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "fast-ssd" {
-			t.Errorf("storage class = %v, want %q", pvc.Spec.StorageClassName, "fast-ssd")
+		if pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != fastSSD {
+			t.Errorf("storage class = %v, want %q", pvc.Spec.StorageClassName, fastSSD)
 		}
 	})
 }

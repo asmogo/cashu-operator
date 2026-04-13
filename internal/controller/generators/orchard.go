@@ -76,7 +76,7 @@ func mintSelectorLabels(mint *mintv1alpha1.CashuMint) map[string]string {
 
 func orchardLabels(mint *mintv1alpha1.CashuMint) map[string]string {
 	labels := mintSelectorLabels(mint)
-	labels["app.kubernetes.io/component"] = "orchard"
+	labels["app.kubernetes.io/component"] = orchardStr
 	return labels
 }
 
@@ -99,12 +99,12 @@ func GenerateOrchardContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 	}
 
 	return corev1.Container{
-		Name:            "orchard",
+		Name:            orchardStr,
 		Image:           image,
 		ImagePullPolicy: imagePullPolicy,
 		Ports: []corev1.ContainerPort{
 			{
-				Name:          "orchard",
+				Name:          orchardStr,
 				ContainerPort: port,
 				Protocol:      corev1.ProtocolTCP,
 			},
@@ -114,7 +114,7 @@ func GenerateOrchardContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 		Resources:    getOrchardResourceRequirements(mint),
 		LivenessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("orchard")},
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(orchardStr)},
 			},
 			InitialDelaySeconds: 30,
 			PeriodSeconds:       30,
@@ -123,7 +123,7 @@ func GenerateOrchardContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 		},
 		ReadinessProbe: &corev1.Probe{
 			ProbeHandler: corev1.ProbeHandler{
-				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("orchard")},
+				TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(orchardStr)},
 			},
 			InitialDelaySeconds: 10,
 			PeriodSeconds:       10,
@@ -561,9 +561,9 @@ func GenerateOrchardService(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme
 			Selector: mintSelectorLabels(mint),
 			Ports: []corev1.ServicePort{
 				{
-					Name:       "orchard",
+					Name:       orchardStr,
 					Port:       orchardPort(mint),
-					TargetPort: intstr.FromString("orchard"),
+					TargetPort: intstr.FromString(orchardStr),
 					Protocol:   corev1.ProtocolTCP,
 				},
 			},
@@ -594,9 +594,9 @@ func GenerateOrchardIngress(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme
 	}
 
 	annotations := map[string]string{
-		"nginx.ingress.kubernetes.io/ssl-redirect":      "true",
+		"nginx.ingress.kubernetes.io/ssl-redirect":      trueStr,
 		"nginx.ingress.kubernetes.io/backend-protocol":  "HTTP",
-		"nginx.ingress.kubernetes.io/enable-cors":       "true",
+		"nginx.ingress.kubernetes.io/enable-cors":       trueStr,
 		"nginx.ingress.kubernetes.io/cors-allow-origin": "*",
 	}
 	if mint.Spec.Orchard.Ingress.TLS != nil && mint.Spec.Orchard.Ingress.TLS.Enabled &&

@@ -84,7 +84,7 @@ func TestGenerateIngress_Basic(t *testing.T) {
 		t.Errorf("host = %q, want %q", ingress.Spec.Rules[0].Host, testHost)
 	}
 	// Default annotations
-	if ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] != "true" {
+	if ingress.Annotations["nginx.ingress.kubernetes.io/ssl-redirect"] != trueStr {
 		t.Error("missing default ssl-redirect annotation")
 	}
 }
