@@ -29,17 +29,17 @@ func TestDefaultOrchardImage(t *testing.T) {
 		{
 			name:           "sqlite",
 			databaseEngine: DatabaseEngineSQLite,
-			expected:       "ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1",
+			expected:       "ghcr.io/cashubtc/orchard-mintdb-sqlite:1.8.1",
 		},
 		{
 			name:           "postgres",
 			databaseEngine: DatabaseEnginePostgres,
-			expected:       "ghcr.io/cashubtc/orchard-mintdb-postgres:v1.8.1",
+			expected:       "ghcr.io/cashubtc/orchard-mintdb-postgres:1.8.1",
 		},
 		{
 			name:           "fallback to sqlite",
 			databaseEngine: DatabaseEngineRedb,
-			expected:       "ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1",
+			expected:       "ghcr.io/cashubtc/orchard-mintdb-sqlite:1.8.1",
 		},
 	}
 

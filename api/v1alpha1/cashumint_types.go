@@ -36,8 +36,8 @@ const (
 	DefaultClusterIssuerKind    = "ClusterIssuer"
 	DefaultIngressClassName     = "nginx"
 	DefaultMintImage            = "cashubtc/mintd:0.15.0"
-	DefaultOrchardSQLiteImage   = "ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1"
-	DefaultOrchardPostgresImage = "ghcr.io/cashubtc/orchard-mintdb-postgres:v1.8.1"
+	DefaultOrchardSQLiteImage   = "ghcr.io/cashubtc/orchard-mintdb-sqlite:1.8.1"
+	DefaultOrchardPostgresImage = "ghcr.io/cashubtc/orchard-mintdb-postgres:1.8.1"
 )
 
 func DefaultOrchardImage(databaseEngine string) string {
