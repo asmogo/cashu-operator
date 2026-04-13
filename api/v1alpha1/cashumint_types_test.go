@@ -20,6 +20,38 @@ import (
 	"testing"
 )
 
+func TestDefaultOrchardImage(t *testing.T) {
+	tests := []struct {
+		name           string
+		databaseEngine string
+		expected       string
+	}{
+		{
+			name:           "sqlite",
+			databaseEngine: DatabaseEngineSQLite,
+			expected:       "ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1",
+		},
+		{
+			name:           "postgres",
+			databaseEngine: DatabaseEnginePostgres,
+			expected:       "ghcr.io/cashubtc/orchard-mintdb-postgres:v1.8.1",
+		},
+		{
+			name:           "fallback to sqlite",
+			databaseEngine: DatabaseEngineRedb,
+			expected:       "ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := DefaultOrchardImage(tt.databaseEngine); got != tt.expected {
+				t.Fatalf("DefaultOrchardImage(%q) = %q, want %q", tt.databaseEngine, got, tt.expected)
+			}
+		})
+	}
+}
+
 func TestActiveBackend_Single(t *testing.T) {
 	tests := []struct {
 		name     string

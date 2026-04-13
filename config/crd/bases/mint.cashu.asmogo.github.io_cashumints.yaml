@@ -2685,7 +2685,8 @@ spec:
                   image:
                     description: |-
                       Image specifies the Orchard container image.
-                      When omitted, the operator chooses a postgres or sqlite image variant based on the mint database engine.
+                      When omitted, the operator uses the v1.8.1 image variant from ghcr.io/cashubtc
+                      matching the mint database engine (sqlite or postgres).
                     type: string
                   imagePullPolicy:
                     default: IfNotPresent

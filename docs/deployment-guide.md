@@ -179,6 +179,9 @@ That gives Orchard direct access to:
 - the mint management RPC over `127.0.0.1:<managementRPC.port>`
 - the mint work directory for sqlite-backed mints
 
+By default, the operator uses Orchard `v1.8.1` from the new `cashubtc` image namespace:
+`ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1` or `ghcr.io/cashubtc/orchard-mintdb-postgres:v1.8.1`.
+
 The operator also creates Orchard-specific Kubernetes resources:
 
 - a dedicated PVC for Orchard application state (`<mint-name>-orchard-data`)

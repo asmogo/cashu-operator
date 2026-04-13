@@ -36,8 +36,8 @@ const (
 	DefaultClusterIssuerKind    = "ClusterIssuer"
 	DefaultIngressClassName     = "nginx"
 	DefaultMintImage            = "cashubtc/mintd:0.15.0"
-	DefaultOrchardSQLiteImage   = "ghcr.io/orangeshyguy21/orchard-mintdb-sqlite:latest"
-	DefaultOrchardPostgresImage = "ghcr.io/orangeshyguy21/orchard-mintdb-postgres:latest"
+	DefaultOrchardSQLiteImage   = "ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1"
+	DefaultOrchardPostgresImage = "ghcr.io/cashubtc/orchard-mintdb-postgres:v1.8.1"
 )
 
 func DefaultOrchardImage(databaseEngine string) string {
@@ -887,7 +887,8 @@ type OrchardConfig struct {
 	Enabled bool `json:"enabled"`
 
 	// Image specifies the Orchard container image.
-	// When omitted, the operator chooses a postgres or sqlite image variant based on the mint database engine.
+	// When omitted, the operator uses the v1.8.1 image variant from ghcr.io/cashubtc
+	// matching the mint database engine (sqlite or postgres).
 	// +optional
 	Image string `json:"image,omitempty"`
 

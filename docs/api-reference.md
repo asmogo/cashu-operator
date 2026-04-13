@@ -244,7 +244,7 @@ spec:
 | Field                      | Type                           | Required | Default | Notes |
 |---------------------------|--------------------------------|----------|---------|-------|
 | `enabled`                 | bool                           | Yes      | `false` | Deploy Orchard alongside the mint |
-| `image`                   | string                         | No       | derived from mint DB engine | Defaults to `ghcr.io/orangeshyguy21/orchard-mintdb-sqlite:latest` or `...-postgres:latest` |
+| `image`                   | string                         | No       | derived from mint DB engine | Defaults to `ghcr.io/cashubtc/orchard-mintdb-sqlite:v1.8.1` or `ghcr.io/cashubtc/orchard-mintdb-postgres:v1.8.1` |
 | `imagePullPolicy`         | string (`Always`,`Never`,`IfNotPresent`) | No | `IfNotPresent` | — |
 | `host`                    | string                         | No       | `0.0.0.0` | Orchard listen address |
 | `port`                    | int32                          | No       | `3321`  | Orchard listen port |
