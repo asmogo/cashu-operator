@@ -18,6 +18,8 @@ package v1alpha1
 
 import (
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestDefaultOrchardImage(t *testing.T) {
@@ -112,4 +114,87 @@ func TestActiveBackend_Multiple(t *testing.T) {
 	if result != "" {
 		t.Errorf("ActiveBackend() = %q, want empty string for multiple backends", result)
 	}
+}
+
+func TestManagementRPCTLSEnabled(t *testing.T) {
+	tests := []struct {
+		name string
+		spec *CashuMintSpec
+		want bool
+	}{
+		{
+			name: "nil spec",
+			spec: nil,
+			want: false,
+		},
+		{
+			name: "management RPC disabled",
+			spec: &CashuMintSpec{
+				ManagementRPC: &ManagementRPCConfig{Enabled: false},
+				Orchard:       &OrchardConfig{Enabled: true},
+			},
+			want: false,
+		},
+		{
+			name: "orchard enabled requires TLS",
+			spec: &CashuMintSpec{
+				ManagementRPC: &ManagementRPCConfig{Enabled: true},
+				Orchard:       &OrchardConfig{Enabled: true},
+			},
+			want: true,
+		},
+		{
+			name: "explicit TLS secret requires TLS",
+			spec: &CashuMintSpec{
+				ManagementRPC: &ManagementRPCConfig{
+					Enabled:      true,
+					TLSSecretRef: &corev1.LocalObjectReference{Name: "management-rpc-tls"},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "management RPC without orchard or TLS secret",
+			spec: &CashuMintSpec{
+				ManagementRPC: &ManagementRPCConfig{Enabled: true},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ManagementRPCTLSEnabled(tt.spec); got != tt.want {
+				t.Fatalf("ManagementRPCTLSEnabled() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManagementRPCTLSSecretName(t *testing.T) {
+	t.Run("uses explicit secret name", func(t *testing.T) {
+		spec := &CashuMintSpec{
+			ManagementRPC: &ManagementRPCConfig{
+				Enabled:      true,
+				TLSSecretRef: &corev1.LocalObjectReference{Name: "custom-management-rpc-tls"},
+			},
+		}
+
+		if got := ManagementRPCTLSSecretName(spec, "example-mint"); got != "custom-management-rpc-tls" {
+			t.Fatalf("ManagementRPCTLSSecretName() = %q, want custom-management-rpc-tls", got)
+		}
+	})
+
+	t.Run("falls back to generated name", func(t *testing.T) {
+		spec := &CashuMintSpec{
+			ManagementRPC: &ManagementRPCConfig{
+				Enabled:      true,
+				TLSSecretRef: &corev1.LocalObjectReference{},
+			},
+		}
+
+		if got := ManagementRPCTLSSecretName(spec, "example-mint"); got != "example-mint-management-rpc-tls" {
+			t.Fatalf("ManagementRPCTLSSecretName() = %q, want example-mint-management-rpc-tls", got)
+		}
+	})
 }
