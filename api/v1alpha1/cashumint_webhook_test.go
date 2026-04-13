@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -174,8 +175,8 @@ func TestDefault_Ingress(t *testing.T) {
 	m := validMint()
 	m.Spec.Ingress = &IngressConfig{Enabled: true, Host: "mint.local"}
 	m.Default()
-	if m.Spec.Ingress.ClassName != "nginx" {
-		t.Errorf("className = %q, want nginx", m.Spec.Ingress.ClassName)
+	if m.Spec.Ingress.ClassName != DefaultIngressClassName {
+		t.Errorf("className = %q, want %s", m.Spec.Ingress.ClassName, DefaultIngressClassName)
 	}
 }
 
@@ -272,6 +273,113 @@ func TestDefault_ManagementRPC(t *testing.T) {
 	}
 	if m.Spec.ManagementRPC.Port != 8086 {
 		t.Errorf("port = %d, want 8086", m.Spec.ManagementRPC.Port)
+	}
+}
+
+func setupOrchardMintForTest() *CashuMint {
+	m := validMint()
+	m.Spec.ManagementRPC = nil
+	m.Spec.Orchard = &OrchardConfig{
+		Enabled:           true,
+		SetupKeySecretRef: orchardSetupKeyRef(),
+		Mint:              &OrchardMintConfig{RPC: &OrchardMintRPCConfig{}},
+		Bitcoin:           &OrchardBitcoinConfig{},
+		TaprootAssets:     &OrchardTaprootAssetsConfig{},
+		Ingress: &IngressConfig{
+			Enabled: true,
+			Host:    "orchard.local",
+			TLS: &IngressTLSConfig{
+				Enabled: true,
+				CertManager: &CertManagerConfig{
+					Enabled:    true,
+					IssuerName: "letsencrypt",
+				},
+			},
+		},
+	}
+	m.Default()
+	return m
+}
+
+func TestDefault_Orchard_BasicProperties(t *testing.T) {
+	m := setupOrchardMintForTest()
+	if m.Spec.Orchard.Image != DefaultOrchardImage(DatabaseEnginePostgres) {
+		t.Errorf("image = %q, want postgres orchard default", m.Spec.Orchard.Image)
+	}
+	if m.Spec.Orchard.ImagePullPolicy != corev1.PullIfNotPresent {
+		t.Errorf("imagePullPolicy = %v, want IfNotPresent", m.Spec.Orchard.ImagePullPolicy)
+	}
+	if m.Spec.Orchard.Host != DefaultListenHost {
+		t.Errorf("host = %q, want %q", m.Spec.Orchard.Host, DefaultListenHost)
+	}
+	if m.Spec.Orchard.Port != 3321 {
+		t.Errorf("port = %d, want 3321", m.Spec.Orchard.Port)
+	}
+	if m.Spec.Orchard.BasePath != "api" {
+		t.Errorf("basePath = %q, want api", m.Spec.Orchard.BasePath)
+	}
+	if m.Spec.Orchard.LogLevel != "warn" {
+		t.Errorf("logLevel = %q, want warn", m.Spec.Orchard.LogLevel)
+	}
+}
+
+func TestDefault_Orchard_ThrottleAndStorage(t *testing.T) {
+	m := setupOrchardMintForTest()
+	if m.Spec.Orchard.ThrottleTTL == nil || *m.Spec.Orchard.ThrottleTTL != 60000 {
+		t.Errorf("throttleTTL = %v, want 60000", m.Spec.Orchard.ThrottleTTL)
+	}
+	if m.Spec.Orchard.ThrottleLimit == nil || *m.Spec.Orchard.ThrottleLimit != 20 {
+		t.Errorf("throttleLimit = %v, want 20", m.Spec.Orchard.ThrottleLimit)
+	}
+	if m.Spec.Orchard.Storage == nil || m.Spec.Orchard.Storage.Size != defaultStorageSize {
+		t.Errorf("storage size = %+v, want %s", m.Spec.Orchard.Storage, defaultStorageSize)
+	}
+	if m.Spec.Orchard.Service == nil || m.Spec.Orchard.Service.Type != corev1.ServiceTypeClusterIP {
+		t.Errorf("service = %+v, want ClusterIP", m.Spec.Orchard.Service)
+	}
+}
+
+func TestDefault_Orchard_MintAndRPC(t *testing.T) {
+	m := setupOrchardMintForTest()
+	if m.Spec.Orchard.Mint == nil || m.Spec.Orchard.Mint.Type != "cdk" {
+		t.Errorf("mint = %+v, want type cdk", m.Spec.Orchard.Mint)
+	}
+	if m.Spec.Orchard.Mint.RPC == nil {
+		t.Fatal("expected orchard mint RPC config")
+	}
+	if m.Spec.Orchard.Mint.RPC.Host != localhostIP {
+		t.Errorf("mint RPC host = %q, want %q", m.Spec.Orchard.Mint.RPC.Host, localhostIP)
+	}
+	if m.Spec.Orchard.Mint.RPC.Port != 8086 {
+		t.Errorf("mint RPC port = %d, want 8086", m.Spec.Orchard.Mint.RPC.Port)
+	}
+	if m.Spec.Orchard.Mint.RPC.MTLS == nil || !*m.Spec.Orchard.Mint.RPC.MTLS {
+		t.Errorf("mint RPC mTLS = %v, want true", m.Spec.Orchard.Mint.RPC.MTLS)
+	}
+}
+
+func TestDefault_Orchard_Integrations(t *testing.T) {
+	m := setupOrchardMintForTest()
+	if m.Spec.Orchard.Bitcoin == nil || m.Spec.Orchard.Bitcoin.Type != "core" {
+		t.Errorf("bitcoin = %+v, want default type core", m.Spec.Orchard.Bitcoin)
+	}
+	if m.Spec.Orchard.TaprootAssets == nil || m.Spec.Orchard.TaprootAssets.Type != "tapd" {
+		t.Errorf("taprootAssets = %+v, want default type tapd", m.Spec.Orchard.TaprootAssets)
+	}
+	if m.Spec.Orchard.Ingress == nil || m.Spec.Orchard.Ingress.ClassName != DefaultIngressClassName {
+		t.Errorf("ingress = %+v, want default class name", m.Spec.Orchard.Ingress)
+	}
+	if m.Spec.Orchard.Ingress.TLS == nil || m.Spec.Orchard.Ingress.TLS.CertManager == nil || m.Spec.Orchard.Ingress.TLS.CertManager.IssuerKind != DefaultClusterIssuerKind {
+		t.Errorf("ingress TLS cert-manager = %+v, want default issuer kind", m.Spec.Orchard.Ingress.TLS)
+	}
+	if m.Spec.ManagementRPC == nil || !m.Spec.ManagementRPC.Enabled {
+		t.Fatalf("management RPC = %+v, want enabled", m.Spec.ManagementRPC)
+	}
+	if m.Spec.ManagementRPC.Address != localhostIP {
+		t.Errorf("management RPC address = %q, want %q", m.Spec.ManagementRPC.Address, localhostIP)
+	}
+	if m.Spec.ManagementRPC.Port != 8086 {
+		t.Errorf("management RPC port = %d, want 8086", m.Spec.ManagementRPC.Port)
 	}
 }
 
@@ -452,6 +560,168 @@ func TestValidateCreate_BackupValidation(t *testing.T) {
 	})
 }
 
+func TestValidateCreate_OrchardValidation(t *testing.T) {
+	t.Run("redb engine is rejected", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Database = DatabaseConfig{Engine: DatabaseEngineRedb}
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.enabled requires spec.database.engine to be postgres or sqlite")
+	})
+
+	t.Run("setup key is required", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{Enabled: true}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.setupKeySecretRef is required")
+	})
+
+	t.Run("setup key selector requires name and key", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: &corev1.SecretKeySelector{},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.setupKeySecretRef.name and key are required")
+	})
+
+	t.Run("mint RPC mTLS requires management RPC", func(t *testing.T) {
+		m := validMint()
+		m.Spec.ManagementRPC = nil
+		mtls := true
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			Mint: &OrchardMintConfig{
+				RPC: &OrchardMintRPCConfig{MTLS: &mtls},
+			},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.mint.rpc.mTLS=true requires spec.managementRPC.enabled=true")
+	})
+
+	t.Run("bitcoin configuration requires host, port, and credentials", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			Bitcoin:           &OrchardBitcoinConfig{},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.bitcoin.rpcHost is required")
+		requireValidationErrorContains(t, err, "spec.orchard.bitcoin.rpcPort is required")
+		requireValidationErrorContains(t, err, "spec.orchard.bitcoin.rpcUserSecretRef is required")
+		requireValidationErrorContains(t, err, "spec.orchard.bitcoin.rpcPasswordSecretRef is required")
+	})
+
+	t.Run("lightning lnd requires macaroon and cert", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			Lightning: &OrchardLightningConfig{
+				Type:    "lnd",
+				RPCHost: "lnd.internal",
+				RPCPort: 10009,
+			},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.lightning.macaroonSecretRef is required")
+		requireValidationErrorContains(t, err, "spec.orchard.lightning.certSecretRef is required")
+	})
+
+	t.Run("lightning cln requires key and CA", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			Lightning: &OrchardLightningConfig{
+				Type:    "cln",
+				RPCHost: "cln.internal",
+				RPCPort: 9736,
+			},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.lightning.keySecretRef is required")
+		requireValidationErrorContains(t, err, "spec.orchard.lightning.caSecretRef is required")
+	})
+
+	t.Run("taproot assets requires host, port, and credentials", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			TaprootAssets:     &OrchardTaprootAssetsConfig{},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.taprootAssets.rpcHost is required")
+		requireValidationErrorContains(t, err, "spec.orchard.taprootAssets.rpcPort is required")
+		requireValidationErrorContains(t, err, "spec.orchard.taprootAssets.macaroonSecretRef is required")
+		requireValidationErrorContains(t, err, "spec.orchard.taprootAssets.certSecretRef is required")
+	})
+
+	t.Run("ai configuration requires API", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			AI:                &OrchardAIConfig{},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.ai.api is required")
+	})
+}
+
+func TestValidateCreate_OrchardIngressValidation(t *testing.T) {
+	t.Run("host is required when orchard ingress is enabled", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			Ingress: &IngressConfig{
+				Enabled: true,
+			},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.ingress.host is required when ingress is enabled")
+	})
+
+	t.Run("cert-manager issuer is required when orchard TLS is enabled", func(t *testing.T) {
+		m := validMint()
+		m.Spec.Orchard = &OrchardConfig{
+			Enabled:           true,
+			SetupKeySecretRef: orchardSetupKeyRef(),
+			Ingress: &IngressConfig{
+				Enabled: true,
+				Host:    "orchard.local",
+				TLS: &IngressTLSConfig{
+					Enabled: true,
+					CertManager: &CertManagerConfig{
+						Enabled: true,
+					},
+				},
+			},
+		}
+
+		_, err := m.ValidateCreate()
+		requireValidationErrorContains(t, err, "spec.orchard.ingress.tls.certManager.issuerName is required when cert-manager is enabled")
+	})
+}
+
 func TestValidateUpdate(t *testing.T) {
 	m := validMint()
 	_, err := m.ValidateUpdate(nil)
@@ -509,4 +779,21 @@ func TestValidateCreate_GRPCProcessorValidation(t *testing.T) {
 			t.Error("expected error for sidecar TLS missing secret")
 		}
 	})
+}
+
+func orchardSetupKeyRef() *corev1.SecretKeySelector {
+	return &corev1.SecretKeySelector{
+		LocalObjectReference: corev1.LocalObjectReference{Name: "orchard-setup"},
+		Key:                  "setup-key",
+	}
+}
+
+func requireValidationErrorContains(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("expected validation error containing %q, got nil", want)
+	}
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("validation error = %q, want substring %q", err.Error(), want)
+	}
 }
