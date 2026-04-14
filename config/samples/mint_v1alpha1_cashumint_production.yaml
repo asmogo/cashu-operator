@@ -58,11 +58,10 @@ spec:
         enabled: true
         issuerName: letsencrypt-prod
         issuerKind: ClusterIssuer
+  prometheus:
+    enabled: true
   service:
     type: ClusterIP
-    annotations:
-      prometheus.io/scrape: "true"
-      prometheus.io/port: "8085"
   resources:
     requests:
       cpu: 500m

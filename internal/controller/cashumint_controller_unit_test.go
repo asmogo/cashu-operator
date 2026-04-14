@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -262,6 +263,48 @@ func TestReconcileCertificateCreatesCertificate(t *testing.T) {
 	}
 }
 
+func TestReconcilePodMonitor(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("creates PodMonitor when metrics are enabled", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-enabled")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+		reconciler, client := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		podMonitor := &monitoringv1.PodMonitor{}
+		if err := client.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, podMonitor); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if len(podMonitor.Spec.PodMetricsEndpoints) != 1 {
+			t.Fatalf("endpoint count = %d, want 1", len(podMonitor.Spec.PodMetricsEndpoints))
+		}
+		if podMonitor.Spec.PodMetricsEndpoints[0].Port == nil || *podMonitor.Spec.PodMetricsEndpoints[0].Port != "metrics" {
+			t.Fatalf("endpoint port = %v, want metrics", podMonitor.Spec.PodMetricsEndpoints[0].Port)
+		}
+	})
+
+	t.Run("deletes PodMonitor when metrics are disabled", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-disabled")
+		existing := &monitoringv1.PodMonitor{
+			ObjectMeta: metav1.ObjectMeta{Name: mint.Name, Namespace: mint.Namespace},
+		}
+
+		reconciler, client := newUnitTestReconciler(t, mint, existing)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		err := client.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, &monitoringv1.PodMonitor{})
+		if !apierrors.IsNotFound(err) {
+			t.Fatalf("expected PodMonitor to be deleted, got %v", err)
+		}
+	})
+}
+
 func newUnitTestReconciler(t *testing.T, objects ...ctrlclient.Object) (*CashuMintReconciler, ctrlclient.Client) {
 	t.Helper()
 
@@ -269,6 +312,7 @@ func newUnitTestReconciler(t *testing.T, objects ...ctrlclient.Object) (*CashuMi
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(mintv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
+	utilruntime.Must(monitoringv1.AddToScheme(scheme))
 
 	builder := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&mintv1alpha1.CashuMint{})
 	if len(objects) > 0 {
