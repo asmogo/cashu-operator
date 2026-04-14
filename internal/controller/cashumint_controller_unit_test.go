@@ -304,6 +304,71 @@ func TestReconcilePodMonitor(t *testing.T) {
 			t.Fatalf("expected PodMonitor to be deleted, got %v", err)
 		}
 	})
+
+	t.Run("no-op when metrics are disabled and no PodMonitor exists", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-disabled-no-existing")
+		// Prometheus is nil — no PodMonitor pre-exists either.
+		reconciler, _ := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+	})
+
+	t.Run("no-op when metrics are explicitly disabled via Enabled=false", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-explicitly-disabled")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: false}
+		reconciler, _ := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+	})
+
+	t.Run("sets correct labels on PodMonitor", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-labels")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+		reconciler, c := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		podMonitor := &monitoringv1.PodMonitor{}
+		if err := c.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, podMonitor); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		wantLabels := map[string]string{
+			"app.kubernetes.io/name":       "cashu-mint",
+			"app.kubernetes.io/instance":   mint.Name,
+			"app.kubernetes.io/managed-by": "cashu-operator",
+		}
+		for k, want := range wantLabels {
+			if got := podMonitor.Labels[k]; got != want {
+				t.Errorf("label %q = %q, want %q", k, got, want)
+			}
+		}
+	})
+
+	t.Run("sets owner reference on PodMonitor", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-ownerref")
+		mint.UID = "test-uid-123"
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+		reconciler, c := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		podMonitor := &monitoringv1.PodMonitor{}
+		if err := c.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, podMonitor); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if len(podMonitor.OwnerReferences) == 0 {
+			t.Fatal("expected owner reference to be set on PodMonitor")
+		}
+		if podMonitor.OwnerReferences[0].Name != mint.Name {
+			t.Errorf("owner reference name = %q, want %q", podMonitor.OwnerReferences[0].Name, mint.Name)
+		}
+	})
 }
 
 func TestReconcileOptionalMnemonic(t *testing.T) {

@@ -91,3 +91,65 @@ func TestGeneratePodMonitor_OwnerReference(t *testing.T) {
 		t.Fatal("expected owner reference to be set")
 	}
 }
+
+func TestGeneratePodMonitor_ExplicitlyDisabled(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("explicitly-disabled")
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: false}
+
+	podMonitor, err := GeneratePodMonitor(mint, scheme)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if podMonitor != nil {
+		t.Fatalf("expected nil PodMonitor when Enabled=false, got %#v", podMonitor)
+	}
+}
+
+func TestGeneratePodMonitor_Labels(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("label-check")
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+	podMonitor, err := GeneratePodMonitor(mint, scheme)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if podMonitor == nil {
+		t.Fatal("expected PodMonitor, got nil")
+	}
+
+	wantLabels := map[string]string{
+		"app.kubernetes.io/name":       "cashu-mint",
+		"app.kubernetes.io/instance":   mint.Name,
+		"app.kubernetes.io/managed-by": "cashu-operator",
+	}
+	for k, want := range wantLabels {
+		if got := podMonitor.Labels[k]; got != want {
+			t.Errorf("label %q = %q, want %q", k, got, want)
+		}
+		if got := podMonitor.Spec.Selector.MatchLabels[k]; got != want {
+			t.Errorf("selector label %q = %q, want %q", k, got, want)
+		}
+	}
+}
+
+func TestGeneratePodMonitor_TypeMeta(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("typemeta-check")
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+	podMonitor, err := GeneratePodMonitor(mint, scheme)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if podMonitor == nil {
+		t.Fatal("expected PodMonitor, got nil")
+	}
+	if podMonitor.Kind != "PodMonitor" {
+		t.Errorf("Kind = %q, want PodMonitor", podMonitor.Kind)
+	}
+	if podMonitor.APIVersion == "" {
+		t.Error("APIVersion should not be empty")
+	}
+}
