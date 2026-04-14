@@ -406,6 +406,225 @@ var _ = Describe("CashuMint Controller", func() {
 		})
 	})
 
+	Context("When Orchard is enabled", func() {
+		const resourceName = "test-orchard-enabled"
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: "default",
+		}
+
+		orchardSecretName := types.NamespacedName{
+			Name:      "orchard-setup",
+			Namespace: "default",
+		}
+
+		BeforeEach(func() {
+			By("creating the Orchard setup secret and custom resource")
+			orchardSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      orchardSecretName.Name,
+					Namespace: orchardSecretName.Namespace,
+				},
+				StringData: map[string]string{
+					"setup-key": "orchard-key",
+				},
+			}
+			Expect(k8sClient.Create(ctx, orchardSecret)).To(Succeed())
+
+			resource := &mintv1alpha1.CashuMint{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: "default",
+				},
+				Spec: mintv1alpha1.CashuMintSpec{
+					Image: mintv1alpha1.DefaultMintImage,
+					MintInfo: mintv1alpha1.MintInfo{
+						URL:        "http://test-mint.local",
+						ListenPort: 8085,
+					},
+					Database: mintv1alpha1.DatabaseConfig{
+						Engine: "sqlite",
+						SQLite: &mintv1alpha1.SQLiteConfig{
+							DataDir: "/data",
+						},
+					},
+					ManagementRPC: &mintv1alpha1.ManagementRPCConfig{
+						Enabled: true,
+						Address: "127.0.0.1",
+						Port:    8086,
+					},
+					Orchard: &mintv1alpha1.OrchardConfig{
+						Enabled:  true,
+						Host:     "0.0.0.0",
+						Port:     3321,
+						BasePath: "api",
+						LogLevel: "warn",
+						SetupKeySecretRef: &corev1.SecretKeySelector{
+							LocalObjectReference: corev1.LocalObjectReference{Name: orchardSecretName.Name},
+							Key:                  "setup-key",
+						},
+						Mint: &mintv1alpha1.OrchardMintConfig{
+							RPC: &mintv1alpha1.OrchardMintRPCConfig{},
+						},
+						Service: &mintv1alpha1.ServiceConfig{
+							Type: corev1.ServiceTypeClusterIP,
+						},
+						Ingress: &mintv1alpha1.IngressConfig{
+							Enabled: true,
+							Host:    "orchard.example.com",
+						},
+					},
+					PaymentBackend: mintv1alpha1.PaymentBackendConfig{
+						FakeWallet: &mintv1alpha1.FakeWalletConfig{},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			resource := &mintv1alpha1.CashuMint{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			} else {
+				Expect(errors.IsNotFound(err)).To(BeTrue())
+			}
+
+			orchardSecret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, orchardSecretName, orchardSecret)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, orchardSecret)).To(Succeed())
+			} else {
+				Expect(errors.IsNotFound(err)).To(BeTrue())
+			}
+		})
+
+		It("should reconcile Orchard sidecar, PVC, Service, and Ingress resources", func() {
+			controllerReconciler := &CashuMintReconciler{
+				Client:   k8sClient,
+				Recorder: &fakeRecorder{},
+				Scheme:   k8sClient.Scheme(),
+			}
+
+			for i := 0; i < 3; i++ {
+				_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
+					NamespacedName: typeNamespacedName,
+				})
+				Expect(err).NotTo(HaveOccurred())
+			}
+
+			deployment := &appsv1.Deployment{}
+			Expect(k8sClient.Get(ctx, typeNamespacedName, deployment)).To(Succeed())
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(2))
+
+			var orchardContainer *corev1.Container
+			var mintContainer *corev1.Container
+			for i := range deployment.Spec.Template.Spec.Containers {
+				container := &deployment.Spec.Template.Spec.Containers[i]
+				switch container.Name {
+				case "orchard":
+					orchardContainer = container
+				case "mintd":
+					mintContainer = container
+				}
+			}
+
+			Expect(orchardContainer).NotTo(BeNil())
+			Expect(mintContainer).NotTo(BeNil())
+			Expect(orchardContainer.Image).To(Equal(mintv1alpha1.DefaultOrchardImage(mintv1alpha1.DatabaseEngineSQLite)))
+			Expect(mintContainer.Image).To(Equal(mintv1alpha1.DefaultMintImage))
+			Expect(orchardContainer.SecurityContext).NotTo(BeNil())
+			Expect(orchardContainer.SecurityContext.RunAsNonRoot).NotTo(BeNil())
+			Expect(*orchardContainer.SecurityContext.RunAsNonRoot).To(BeFalse())
+			Expect(orchardContainer.SecurityContext.RunAsUser).NotTo(BeNil())
+			Expect(*orchardContainer.SecurityContext.RunAsUser).To(Equal(int64(0)))
+
+			envMap := map[string]corev1.EnvVar{}
+			for _, envVar := range orchardContainer.Env {
+				envMap[envVar.Name] = envVar
+			}
+			Expect(envMap["MINT_DATABASE"].Value).To(Equal("/mnt/mint/cdk-mintd.sqlite"))
+			Expect(envMap["MINT_API"].Value).To(Equal("http://127.0.0.1:8085"))
+			Expect(envMap["MINT_RPC_HOST"].Value).To(Equal("127.0.0.1"))
+			Expect(envMap["MINT_RPC_PORT"].Value).To(Equal("8086"))
+			Expect(envMap["MINT_RPC_MTLS"].Value).To(Equal("true"))
+			Expect(envMap["MINT_RPC_KEY"].Value).To(Equal("/secrets/management-rpc-tls/client.key"))
+			Expect(envMap["MINT_RPC_CERT"].Value).To(Equal("/secrets/management-rpc-tls/client.pem"))
+			Expect(envMap["MINT_RPC_CA"].Value).To(Equal("/secrets/management-rpc-tls/ca.pem"))
+			Expect(envMap["SETUP_KEY"].ValueFrom).NotTo(BeNil())
+			Expect(envMap["SETUP_KEY"].ValueFrom.SecretKeyRef).NotTo(BeNil())
+			Expect(envMap["SETUP_KEY"].ValueFrom.SecretKeyRef.Name).To(Equal(orchardSecretName.Name))
+			Expect(envMap["SETUP_KEY"].ValueFrom.SecretKeyRef.Key).To(Equal("setup-key"))
+
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      resourceName + "-config",
+				Namespace: "default",
+			}, configMap)).To(Succeed())
+			Expect(configMap.Data["config.toml"]).To(ContainSubstring(`tls_dir_path = "/secrets/management-rpc-tls"`))
+
+			managementRPCSecret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      resourceName + "-management-rpc-tls",
+				Namespace: "default",
+			}, managementRPCSecret)).To(Succeed())
+			Expect(managementRPCSecret.Data).To(HaveKey("ca.pem"))
+			Expect(managementRPCSecret.Data).To(HaveKey("server.pem"))
+			Expect(managementRPCSecret.Data).To(HaveKey("server.key"))
+			Expect(managementRPCSecret.Data).To(HaveKey("client.pem"))
+			Expect(managementRPCSecret.Data).To(HaveKey("client.key"))
+
+			var orchardDataMount, orchardTmpMount, mintTLSMount bool
+			for _, mount := range orchardContainer.VolumeMounts {
+				switch mount.MountPath {
+				case "/app/data":
+					orchardDataMount = true
+				case "/app/data/tmp":
+					orchardTmpMount = true
+				case "/secrets/management-rpc-tls":
+					mintTLSMount = true
+				}
+			}
+			Expect(orchardDataMount).To(BeTrue())
+			Expect(orchardTmpMount).To(BeTrue())
+			Expect(mintTLSMount).To(BeTrue())
+
+			var mintTLSVolumeMount bool
+			for _, mount := range mintContainer.VolumeMounts {
+				if mount.MountPath == "/secrets/management-rpc-tls" {
+					mintTLSVolumeMount = true
+				}
+			}
+			Expect(mintTLSVolumeMount).To(BeTrue())
+
+			orchardPVC := &corev1.PersistentVolumeClaim{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      resourceName + "-orchard-data",
+				Namespace: "default",
+			}, orchardPVC)).To(Succeed())
+
+			orchardService := &corev1.Service{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      resourceName + "-orchard",
+				Namespace: "default",
+			}, orchardService)).To(Succeed())
+			Expect(orchardService.Spec.Ports).To(HaveLen(1))
+			Expect(orchardService.Spec.Ports[0].Port).To(Equal(int32(3321)))
+
+			orchardIngress := &networkingv1.Ingress{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{
+				Name:      resourceName + "-orchard",
+				Namespace: "default",
+			}, orchardIngress)).To(Succeed())
+			Expect(orchardIngress.Spec.Rules).To(HaveLen(1))
+			Expect(orchardIngress.Spec.Rules[0].Host).To(Equal("orchard.example.com"))
+		})
+	})
+
 	Context("When external PostgreSQL URL is secret-backed", func() {
 		const resourceName = "test-external-db-secret-env"
 
@@ -499,7 +718,7 @@ var _ = Describe("CashuMint Controller", func() {
 			var dbEnv *corev1.EnvVar
 			for i := range deployment.Spec.Template.Spec.Containers[0].Env {
 				envVar := &deployment.Spec.Template.Spec.Containers[0].Env[i]
-				if envVar.Name == "CDK_MINTD_DATABASE_URL" {
+				if envVar.Name == "CDK_MINTD_POSTGRES_URL" {
 					dbEnv = envVar
 					break
 				}

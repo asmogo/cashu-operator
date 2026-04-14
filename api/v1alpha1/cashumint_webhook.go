@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -43,6 +44,7 @@ func (r *CashuMint) Default() {
 	r.defaultMintInfo()
 	r.defaultDatabase()
 	r.defaultIngress()
+	r.defaultOrchard()
 	r.defaultOperational()
 	r.defaultPaymentBackend()
 }
@@ -55,7 +57,7 @@ func (r *CashuMint) defaultMintInfo() {
 		r.Spec.MintInfo.ListenPort = 8085
 	}
 	if r.Spec.Image == "" {
-		r.Spec.Image = "ghcr.io/cashubtc/cdk-mintd:latest"
+		r.Spec.Image = DefaultMintImage
 	}
 	if r.Spec.Replicas == nil {
 		replicas := int32(1)
@@ -106,7 +108,7 @@ func (r *CashuMint) defaultPostgres() {
 	}
 	if pg.AutoProvision && pg.AutoProvisionSpec != nil {
 		if pg.AutoProvisionSpec.StorageSize == "" {
-			pg.AutoProvisionSpec.StorageSize = "10Gi"
+			pg.AutoProvisionSpec.StorageSize = DefaultStorageSize
 		}
 		if pg.AutoProvisionSpec.Version == "" {
 			pg.AutoProvisionSpec.Version = "15"
@@ -118,13 +120,96 @@ func (r *CashuMint) defaultIngress() {
 	if r.Spec.Ingress == nil || !r.Spec.Ingress.Enabled {
 		return
 	}
-	if r.Spec.Ingress.ClassName == "" {
-		r.Spec.Ingress.ClassName = "nginx"
+	defaultIngressConfig(r.Spec.Ingress)
+}
+
+func defaultIngressConfig(ingress *IngressConfig) {
+	if ingress == nil || !ingress.Enabled {
+		return
 	}
-	if r.Spec.Ingress.TLS != nil && r.Spec.Ingress.TLS.CertManager != nil {
-		if r.Spec.Ingress.TLS.CertManager.IssuerKind == "" {
-			r.Spec.Ingress.TLS.CertManager.IssuerKind = "ClusterIssuer"
+	if ingress.ClassName == "" {
+		ingress.ClassName = DefaultIngressClassName
+	}
+	if ingress.TLS != nil && ingress.TLS.CertManager != nil {
+		if ingress.TLS.CertManager.IssuerKind == "" {
+			ingress.TLS.CertManager.IssuerKind = DefaultClusterIssuerKind
 		}
+	}
+}
+
+func (r *CashuMint) defaultOrchard() {
+	if r.Spec.Orchard == nil || !r.Spec.Orchard.Enabled {
+		return
+	}
+
+	orchard := r.Spec.Orchard
+	if orchard.Image == "" {
+		orchard.Image = DefaultOrchardImage(r.Spec.Database.Engine)
+	}
+	if orchard.ImagePullPolicy == "" {
+		orchard.ImagePullPolicy = corev1.PullIfNotPresent
+	}
+	if orchard.Host == "" {
+		orchard.Host = DefaultListenHost
+	}
+	if orchard.Port == 0 {
+		orchard.Port = 3321
+	}
+	if orchard.BasePath == "" {
+		orchard.BasePath = "api"
+	}
+	if orchard.LogLevel == "" {
+		orchard.LogLevel = "warn"
+	}
+	if orchard.ThrottleTTL == nil {
+		ttl := int32(60000)
+		orchard.ThrottleTTL = &ttl
+	}
+	if orchard.ThrottleLimit == nil {
+		limit := int32(20)
+		orchard.ThrottleLimit = &limit
+	}
+	if orchard.Storage == nil {
+		orchard.Storage = &StorageConfig{}
+	}
+	if orchard.Storage.Size == "" {
+		orchard.Storage.Size = DefaultStorageSize
+	}
+	if orchard.Service == nil {
+		orchard.Service = &ServiceConfig{}
+	}
+	if orchard.Service.Type == "" {
+		orchard.Service.Type = corev1.ServiceTypeClusterIP
+	}
+	if orchard.Ingress != nil && orchard.Ingress.Enabled {
+		defaultIngressConfig(orchard.Ingress)
+	}
+	if r.Spec.ManagementRPC == nil {
+		r.Spec.ManagementRPC = &ManagementRPCConfig{Enabled: true}
+	}
+	if orchard.Mint == nil {
+		orchard.Mint = &OrchardMintConfig{}
+	}
+	if orchard.Mint.Type == "" {
+		orchard.Mint.Type = "cdk"
+	}
+	if orchard.Mint.RPC != nil {
+		if orchard.Mint.RPC.Host == "" {
+			orchard.Mint.RPC.Host = DefaultLoopbackHost
+		}
+		if orchard.Mint.RPC.Port == 0 {
+			orchard.Mint.RPC.Port = 8086
+		}
+		if orchard.Mint.RPC.MTLS == nil {
+			mtls := ManagementRPCTLSEnabled(&r.Spec)
+			orchard.Mint.RPC.MTLS = &mtls
+		}
+	}
+	if orchard.Bitcoin != nil && orchard.Bitcoin.Type == "" {
+		orchard.Bitcoin.Type = "core"
+	}
+	if orchard.TaprootAssets != nil && orchard.TaprootAssets.Type == "" {
+		orchard.TaprootAssets.Type = "tapd"
 	}
 }
 
@@ -138,7 +223,7 @@ func (r *CashuMint) defaultOperational() {
 		}
 	}
 	if r.Spec.Storage != nil && r.Spec.Storage.Size == "" {
-		r.Spec.Storage.Size = "10Gi"
+		r.Spec.Storage.Size = DefaultStorageSize
 	}
 	if r.Spec.Service != nil && r.Spec.Service.Type == "" {
 		r.Spec.Service.Type = "ClusterIP"
@@ -148,7 +233,7 @@ func (r *CashuMint) defaultOperational() {
 	}
 	if r.Spec.ManagementRPC != nil && r.Spec.ManagementRPC.Enabled {
 		if r.Spec.ManagementRPC.Address == "" {
-			r.Spec.ManagementRPC.Address = "127.0.0.1"
+			r.Spec.ManagementRPC.Address = DefaultLoopbackHost
 		}
 		if r.Spec.ManagementRPC.Port == 0 {
 			r.Spec.ManagementRPC.Port = 8086
@@ -343,7 +428,7 @@ func (r *CashuMint) defaultLDKNode() {
 		ldk.GossipSourceType = "rgs"
 	}
 	if ldk.WebserverHost == "" {
-		ldk.WebserverHost = "127.0.0.1"
+		ldk.WebserverHost = DefaultLoopbackHost
 	}
 	if ldk.WebserverPort == 0 {
 		ldk.WebserverPort = 8888
@@ -408,6 +493,14 @@ func (r *CashuMint) validateCashuMint() error {
 		allErrs = append(allErrs, err)
 	}
 
+	if err := r.validateManagementRPC(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	if err := r.validateOrchard(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
 	if len(allErrs) > 0 {
 		return fmt.Errorf("validation failed: %v", allErrs)
 	}
@@ -454,6 +547,54 @@ func (r *CashuMint) validateBackup() error {
 		return fmt.Errorf("backup validation errors: %v", errs)
 	}
 
+	return nil
+}
+
+func validateIngressConfig(path string, ingress *IngressConfig) error {
+	if ingress == nil || !ingress.Enabled {
+		return nil
+	}
+
+	var errs []error
+
+	if ingress.Host == "" {
+		errs = append(errs, fmt.Errorf("%s.host is required when ingress is enabled", path))
+	}
+
+	if ingress.TLS != nil && ingress.TLS.Enabled {
+		if ingress.TLS.CertManager != nil && ingress.TLS.CertManager.Enabled {
+			if ingress.TLS.CertManager.IssuerName == "" {
+				errs = append(errs, fmt.Errorf("%s.tls.certManager.issuerName is required when cert-manager is enabled", path))
+			}
+		}
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("%s validation errors: %v", path, errs)
+	}
+	return nil
+}
+
+func validateSecretKeySelector(path string, ref *corev1.SecretKeySelector, required bool) error {
+	if ref == nil {
+		if required {
+			return fmt.Errorf("%s is required", path)
+		}
+		return nil
+	}
+	if ref.Name == "" || ref.Key == "" {
+		return fmt.Errorf("%s.name and key are required", path)
+	}
+	return nil
+}
+
+func (r *CashuMint) validateManagementRPC() error {
+	if r.Spec.ManagementRPC == nil {
+		return nil
+	}
+	if r.Spec.ManagementRPC.TLSSecretRef != nil && r.Spec.ManagementRPC.TLSSecretRef.Name == "" {
+		return fmt.Errorf("management RPC validation errors: [spec.managementRPC.tlsSecretRef.name is required]")
+	}
 	return nil
 }
 
@@ -568,29 +709,7 @@ func (r *CashuMint) validatePaymentBackend() error {
 
 // validateIngress validates the ingress configuration
 func (r *CashuMint) validateIngress() error {
-	if r.Spec.Ingress == nil || !r.Spec.Ingress.Enabled {
-		return nil
-	}
-
-	var errs []error
-
-	if r.Spec.Ingress.Host == "" {
-		errs = append(errs, fmt.Errorf("spec.ingress.host is required when ingress is enabled"))
-	}
-
-	// Validate cert-manager configuration if TLS is enabled
-	if r.Spec.Ingress.TLS != nil && r.Spec.Ingress.TLS.Enabled {
-		if r.Spec.Ingress.TLS.CertManager != nil && r.Spec.Ingress.TLS.CertManager.Enabled {
-			if r.Spec.Ingress.TLS.CertManager.IssuerName == "" {
-				errs = append(errs, fmt.Errorf("spec.ingress.tls.certManager.issuerName is required when cert-manager is enabled"))
-			}
-		}
-	}
-
-	if len(errs) > 0 {
-		return fmt.Errorf("ingress validation errors: %v", errs)
-	}
-	return nil
+	return validateIngressConfig("spec.ingress", r.Spec.Ingress)
 }
 
 // validateResources validates resource requirements if specified
@@ -610,5 +729,143 @@ func (r *CashuMint) validateResources() error {
 		}
 	}
 
+	return nil
+}
+
+func (r *CashuMint) validateOrchard() error {
+	if r.Spec.Orchard == nil || !r.Spec.Orchard.Enabled {
+		return nil
+	}
+
+	var errs []error
+	orchard := r.Spec.Orchard
+
+	if r.Spec.Database.Engine == DatabaseEngineRedb {
+		errs = append(errs, fmt.Errorf("spec.orchard.enabled requires spec.database.engine to be postgres or sqlite"))
+	}
+
+	if err := validateSecretKeySelector("spec.orchard.setupKeySecretRef", orchard.SetupKeySecretRef, true); err != nil {
+		errs = append(errs, err)
+	}
+
+	if err := validateIngressConfig("spec.orchard.ingress", orchard.Ingress); err != nil {
+		errs = append(errs, err)
+	}
+
+	errs = append(errs, r.validateOrchardMint(orchard)...)
+	errs = append(errs, r.validateOrchardBitcoin(orchard)...)
+	errs = append(errs, r.validateOrchardLightning(orchard)...)
+	errs = append(errs, r.validateOrchardTaprootAssets(orchard)...)
+	errs = append(errs, r.validateOrchardAI(orchard)...)
+
+	if len(errs) > 0 {
+		return fmt.Errorf("orchard validation errors: %v", errs)
+	}
+	return nil
+}
+
+func (r *CashuMint) validateOrchardMint(orchard *OrchardConfig) []error {
+	if orchard == nil || orchard.Mint == nil {
+		return nil
+	}
+
+	var errs []error
+	if err := validateSecretKeySelector("spec.orchard.mint.databaseCaSecretRef", orchard.Mint.DatabaseCASecretRef, false); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateSecretKeySelector("spec.orchard.mint.databaseCertSecretRef", orchard.Mint.DatabaseCertSecretRef, false); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateSecretKeySelector("spec.orchard.mint.databaseKeySecretRef", orchard.Mint.DatabaseKeySecretRef, false); err != nil {
+		errs = append(errs, err)
+	}
+	if orchard.Mint.RPC != nil && orchard.Mint.RPC.MTLS != nil && *orchard.Mint.RPC.MTLS {
+		if r.Spec.ManagementRPC == nil || !r.Spec.ManagementRPC.Enabled {
+			errs = append(errs, fmt.Errorf("spec.orchard.mint.rpc.mTLS=true requires spec.managementRPC.enabled=true"))
+		}
+	}
+	return errs
+}
+
+func (r *CashuMint) validateOrchardBitcoin(orchard *OrchardConfig) []error {
+	if orchard == nil || orchard.Bitcoin == nil {
+		return nil
+	}
+
+	var errs []error
+	if orchard.Bitcoin.RPCHost == "" {
+		errs = append(errs, fmt.Errorf("spec.orchard.bitcoin.rpcHost is required"))
+	}
+	if orchard.Bitcoin.RPCPort == 0 {
+		errs = append(errs, fmt.Errorf("spec.orchard.bitcoin.rpcPort is required"))
+	}
+	if err := validateSecretKeySelector("spec.orchard.bitcoin.rpcUserSecretRef", orchard.Bitcoin.RPCUserSecretRef, true); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateSecretKeySelector("spec.orchard.bitcoin.rpcPasswordSecretRef", orchard.Bitcoin.RPCPasswordSecretRef, true); err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+func (r *CashuMint) validateOrchardLightning(orchard *OrchardConfig) []error {
+	if orchard == nil || orchard.Lightning == nil {
+		return nil
+	}
+
+	var errs []error
+	if orchard.Lightning.RPCHost == "" {
+		errs = append(errs, fmt.Errorf("spec.orchard.lightning.rpcHost is required"))
+	}
+	if orchard.Lightning.RPCPort == 0 {
+		errs = append(errs, fmt.Errorf("spec.orchard.lightning.rpcPort is required"))
+	}
+	switch orchard.Lightning.Type {
+	case "lnd":
+		if err := validateSecretKeySelector("spec.orchard.lightning.macaroonSecretRef", orchard.Lightning.MacaroonSecretRef, true); err != nil {
+			errs = append(errs, err)
+		}
+		if err := validateSecretKeySelector("spec.orchard.lightning.certSecretRef", orchard.Lightning.CertSecretRef, true); err != nil {
+			errs = append(errs, err)
+		}
+	case "cln":
+		if err := validateSecretKeySelector("spec.orchard.lightning.keySecretRef", orchard.Lightning.KeySecretRef, true); err != nil {
+			errs = append(errs, err)
+		}
+		if err := validateSecretKeySelector("spec.orchard.lightning.caSecretRef", orchard.Lightning.CASecretRef, true); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+func (r *CashuMint) validateOrchardTaprootAssets(orchard *OrchardConfig) []error {
+	if orchard == nil || orchard.TaprootAssets == nil {
+		return nil
+	}
+
+	var errs []error
+	if orchard.TaprootAssets.RPCHost == "" {
+		errs = append(errs, fmt.Errorf("spec.orchard.taprootAssets.rpcHost is required"))
+	}
+	if orchard.TaprootAssets.RPCPort == 0 {
+		errs = append(errs, fmt.Errorf("spec.orchard.taprootAssets.rpcPort is required"))
+	}
+	if err := validateSecretKeySelector("spec.orchard.taprootAssets.macaroonSecretRef", orchard.TaprootAssets.MacaroonSecretRef, true); err != nil {
+		errs = append(errs, err)
+	}
+	if err := validateSecretKeySelector("spec.orchard.taprootAssets.certSecretRef", orchard.TaprootAssets.CertSecretRef, true); err != nil {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
+func (r *CashuMint) validateOrchardAI(orchard *OrchardConfig) []error {
+	if orchard == nil || orchard.AI == nil {
+		return nil
+	}
+	if orchard.AI.API == "" {
+		return []error{fmt.Errorf("spec.orchard.ai.api is required")}
+	}
 	return nil
 }

@@ -240,6 +240,13 @@ func deepCopyTargets(cashuMint *CashuMint) []deepCopyTarget {
 		{name: "LoggingConfig", obj: cashuMint.Spec.Logging},
 		{name: "ManagementRPCConfig", obj: cashuMint.Spec.ManagementRPC},
 		{name: "MintInfo", obj: &cashuMint.Spec.MintInfo},
+		{name: "OrchardAIConfig", obj: cashuMint.Spec.Orchard.AI},
+		{name: "OrchardBitcoinConfig", obj: cashuMint.Spec.Orchard.Bitcoin},
+		{name: "OrchardConfig", obj: cashuMint.Spec.Orchard},
+		{name: "OrchardLightningConfig", obj: cashuMint.Spec.Orchard.Lightning},
+		{name: "OrchardMintConfig", obj: cashuMint.Spec.Orchard.Mint},
+		{name: "OrchardMintRPCConfig", obj: cashuMint.Spec.Orchard.Mint.RPC},
+		{name: "OrchardTaprootAssetsConfig", obj: cashuMint.Spec.Orchard.TaprootAssets},
 		{name: "PaymentBackendConfig", obj: &cashuMint.Spec.PaymentBackend},
 		{name: "PaymentBackendStatus", obj: &cashuMint.Status.PaymentBackendStatus},
 		{name: "PostgresAutoProvisionSpec", obj: cashuMint.Spec.Database.Postgres.AutoProvisionSpec},
@@ -291,6 +298,10 @@ func sampleCashuMintForDeepCopy() *CashuMint {
 	fsGroup := int64(1000)
 	useKeysetV2 := true
 	clnBolt12 := true
+	orchardThrottleTTL := int32(60000)
+	orchardThrottleLimit := int32(20)
+	orchardCompression := true
+	orchardMTLS := true
 
 	databasePostgres := &PostgresConfig{
 		URL:                      "postgresql://mint:secret@db:5432/cashu",
@@ -468,9 +479,96 @@ func sampleCashuMintForDeepCopy() *CashuMint {
 					ConnectionStringSecretRef: secretKeySelectorPtr("redis-secret", "url"),
 				},
 			},
-			ManagementRPC: &ManagementRPCConfig{Enabled: true, Address: "127.0.0.1", Port: 8086},
-			Prometheus:    &PrometheusConfig{Enabled: true, Address: "0.0.0.0", Port: &prometheusPort},
-			Limits:        &LimitsConfig{MaxInputs: &maxInputs, MaxOutputs: &maxOutputs},
+			ManagementRPC: &ManagementRPCConfig{
+				Enabled:      true,
+				Address:      "127.0.0.1",
+				Port:         8086,
+				TLSSecretRef: &corev1.LocalObjectReference{Name: "management-rpc-tls"},
+			},
+			Orchard: &OrchardConfig{
+				Enabled:           true,
+				Image:             DefaultOrchardPostgresImage,
+				ImagePullPolicy:   corev1.PullIfNotPresent,
+				Host:              DefaultListenHost,
+				Port:              3321,
+				BasePath:          "api",
+				LogLevel:          "warn",
+				SetupKeySecretRef: secretKeySelectorPtr("orchard-secret", "setup-key"),
+				ThrottleTTL:       &orchardThrottleTTL,
+				ThrottleLimit:     &orchardThrottleLimit,
+				Proxy:             "socks5://tor:9050",
+				Compression:       &orchardCompression,
+				Mint: &OrchardMintConfig{
+					Type:                  "cdk",
+					API:                   "https://mint.example.com",
+					Database:              "postgresql://mint:secret@db:5432/cashu",
+					DatabaseCASecretRef:   secretKeySelectorPtr("orchard-db", "ca.pem"),
+					DatabaseCertSecretRef: secretKeySelectorPtr("orchard-db", "client.pem"),
+					DatabaseKeySecretRef:  secretKeySelectorPtr("orchard-db", "client.key"),
+					RPC: &OrchardMintRPCConfig{
+						Host: DefaultLoopbackHost,
+						Port: 8086,
+						MTLS: &orchardMTLS,
+					},
+				},
+				Bitcoin: &OrchardBitcoinConfig{
+					Type:                 "core",
+					RPCHost:              "bitcoin.internal",
+					RPCPort:              18443,
+					RPCUserSecretRef:     secretKeySelectorPtr("bitcoin-rpc", "user"),
+					RPCPasswordSecretRef: secretKeySelectorPtr("bitcoin-rpc", "password"),
+				},
+				Lightning: &OrchardLightningConfig{
+					Type:              "lnd",
+					RPCHost:           "lightning.internal",
+					RPCPort:           10009,
+					MacaroonSecretRef: secretKeySelectorPtr("lightning", "admin.macaroon"),
+					CertSecretRef:     secretKeySelectorPtr("lightning", "tls.cert"),
+					KeySecretRef:      secretKeySelectorPtr("lightning", "client.key"),
+					CASecretRef:       secretKeySelectorPtr("lightning", "ca.pem"),
+				},
+				TaprootAssets: &OrchardTaprootAssetsConfig{
+					Type:              "tapd",
+					RPCHost:           "taproot.internal",
+					RPCPort:           10029,
+					MacaroonSecretRef: secretKeySelectorPtr("taproot-assets", "admin.macaroon"),
+					CertSecretRef:     secretKeySelectorPtr("taproot-assets", "tls.cert"),
+				},
+				AI: &OrchardAIConfig{
+					API: "https://ai.example.com",
+				},
+				Service: &ServiceConfig{
+					Type:           corev1.ServiceTypeClusterIP,
+					Annotations:    map[string]string{"example.com/orchard-service": "true"},
+					LoadBalancerIP: "10.0.0.25",
+				},
+				Ingress: &IngressConfig{
+					Enabled:   true,
+					ClassName: "orchard-nginx",
+					Host:      "orchard.example.com",
+					TLS: &IngressTLSConfig{
+						Enabled:    true,
+						SecretName: "orchard-tls",
+						CertManager: &CertManagerConfig{
+							Enabled:    true,
+							IssuerName: "orchard-issuer",
+							IssuerKind: "Issuer",
+						},
+					},
+					Annotations: map[string]string{"example.com/orchard": "enabled"},
+				},
+				Storage:   &StorageConfig{Size: "15Gi", StorageClassName: &storageClassName},
+				Resources: sampleResourceRequirements(),
+				ContainerSecurityContext: &corev1.SecurityContext{
+					AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+					ReadOnlyRootFilesystem:   &readOnlyRootFilesystem,
+					RunAsNonRoot:             &runAsNonRoot,
+					RunAsUser:                &runAsUser,
+				},
+				ExtraEnv: []corev1.EnvVar{{Name: "ORCHARD_MODE", Value: "test"}},
+			},
+			Prometheus: &PrometheusConfig{Enabled: true, Address: "0.0.0.0", Port: &prometheusPort},
+			Limits:     &LimitsConfig{MaxInputs: &maxInputs, MaxOutputs: &maxOutputs},
 			Ingress: &IngressConfig{
 				Enabled:   true,
 				ClassName: "custom-nginx",

@@ -159,7 +159,7 @@ func GeneratePostgresStatefulSet(mint *mintv1alpha1.CashuMint, scheme *runtime.S
 	spec := mint.Spec.Database.Postgres.AutoProvisionSpec
 	if spec == nil {
 		spec = &mintv1alpha1.PostgresAutoProvisionSpec{
-			StorageSize: "10Gi",
+			StorageSize: mintv1alpha1.DefaultStorageSize,
 			Version:     "15",
 		}
 	}
@@ -179,7 +179,7 @@ func GeneratePostgresStatefulSet(mint *mintv1alpha1.CashuMint, scheme *runtime.S
 
 	storageSize := spec.StorageSize
 	if storageSize == "" {
-		storageSize = "10Gi"
+		storageSize = mintv1alpha1.DefaultStorageSize
 	}
 
 	statefulSet := &appsv1.StatefulSet{

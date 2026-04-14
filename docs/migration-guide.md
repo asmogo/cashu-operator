@@ -13,7 +13,7 @@ Before starting, ensure the following tasks are complete:
 - [ ] **Backup data**  
   - Export database dumps (PostgreSQL, SQLite files, redb storage).
   - Archive Lightning-related secrets (macaroons, TLS certs, API keys).
-  - The operator defaults to `ghcr.io/cashubtc/cdk-mintd:v0.15.0`; for PostgreSQL mints, take a fresh verified backup immediately before rollout because CDK v0.15 performs DB migrations (webhook warning is emitted).
+  - The operator defaults to `cashubtc/mintd:0.15.0`; for PostgreSQL mints, take a fresh verified backup immediately before rollout because CDK v0.15 performs DB migrations.
 - [ ] **Document current configuration**  
   - Record environment variables, command-line flags, configuration files, Secrets, Service definitions, Ingresses, and PersistentVolumeClaims.
   - Note image versions and customizations.

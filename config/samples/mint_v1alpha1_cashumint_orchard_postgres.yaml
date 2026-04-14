@@ -1,0 +1,54 @@
+# CashuMint with Orchard enabled against an auto-provisioned PostgreSQL mint.
+# The operator auto-generates both the PostgreSQL credentials and the BIP39 mnemonic,
+# so no secrets need to be pre-created before applying this manifest.
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-orchard-postgres
+spec:
+  image: cashubtc/mintd:0.15.0
+  mintInfo:
+    url: https://mint-postgres.example.com
+    # autoGenerateMnemonic instructs the operator to create and manage a BIP39
+    # mnemonic Secret named "cashumint-orchard-postgres-mnemonic" automatically.
+    # Remove this and use mnemonicSecretRef instead if you want to supply your own key.
+    autoGenerateMnemonic: true
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 10Gi
+        version: "16"
+  managementRPC:
+    enabled: true
+  orchard:
+    enabled: true
+    setupKeySecretRef:
+      name: orchard-setup
+      key: setup-key
+    mint:
+      rpc:
+        mTLS: true
+    storage:
+      size: 10Gi
+    ingress:
+      enabled: true
+      host: orchard.mint.dev.ucash.space
+      tls:
+        enabled: true
+        certManager:
+          enabled: true
+          issuerName: letsencrypt
+  ingress:
+    enabled: true
+    host: oc.mint.dev.ucash.space
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat

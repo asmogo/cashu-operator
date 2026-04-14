@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
+	"github.com/asmogo/cashu-operator/internal/controller/generators"
 )
 
 func TestHandleError(t *testing.T) {
@@ -301,6 +302,123 @@ func TestReconcilePodMonitor(t *testing.T) {
 		err := client.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, &monitoringv1.PodMonitor{})
 		if !apierrors.IsNotFound(err) {
 			t.Fatalf("expected PodMonitor to be deleted, got %v", err)
+		}
+	})
+}
+
+func TestReconcileOptionalMnemonic(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("creates an auto-generated mnemonic secret", func(t *testing.T) {
+		mint := unitTestCashuMint("auto-mnemonic")
+		mint.Spec.MintInfo.AutoGenerateMnemonic = true
+
+		reconciler, client := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcileOptionalMnemonic(ctx, mint); err != nil {
+			t.Fatalf("reconcileOptionalMnemonic() error = %v", err)
+		}
+
+		secret := &corev1.Secret{}
+		if err := client.Get(ctx, ctrlclient.ObjectKey{Name: generators.MnemonicSecretName(mint.Name), Namespace: mint.Namespace}, secret); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		mnemonic := string(secret.Data[generators.MnemonicSecretKey])
+		if mnemonic == "" {
+			mnemonic = secret.StringData[generators.MnemonicSecretKey]
+		}
+		if mnemonic == "" {
+			t.Fatal("expected generated mnemonic in secret data")
+		}
+		if len(strings.Fields(mnemonic)) != 24 {
+			t.Fatalf("generated mnemonic has %d words, want 24", len(strings.Fields(mnemonic)))
+		}
+	})
+
+	t.Run("keeps an existing mnemonic secret", func(t *testing.T) {
+		mint := unitTestCashuMint("existing-mnemonic")
+		mint.Spec.MintInfo.AutoGenerateMnemonic = true
+		existingMnemonic := "existing mnemonic phrase that should be preserved"
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      generators.MnemonicSecretName(mint.Name),
+				Namespace: mint.Namespace,
+			},
+			Data: map[string][]byte{
+				generators.MnemonicSecretKey: []byte(existingMnemonic),
+			},
+		}
+
+		reconciler, client := newUnitTestReconciler(t, mint, secret)
+		if err := reconciler.reconcileOptionalMnemonic(ctx, mint); err != nil {
+			t.Fatalf("reconcileOptionalMnemonic() error = %v", err)
+		}
+
+		updated := &corev1.Secret{}
+		if err := client.Get(ctx, ctrlclient.ObjectKeyFromObject(secret), updated); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if got := string(updated.Data[generators.MnemonicSecretKey]); got != existingMnemonic {
+			t.Fatalf("mnemonic = %q, want existing mnemonic", got)
+		}
+	})
+}
+
+func TestReconcileManagementRPCTLSSecret(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("creates the configured TLS secret when missing", func(t *testing.T) {
+		mint := unitTestCashuMint("management-rpc-tls")
+		mint.Spec.ManagementRPC = &mintv1alpha1.ManagementRPCConfig{
+			Enabled:      true,
+			TLSSecretRef: &corev1.LocalObjectReference{Name: "custom-management-rpc-tls"},
+		}
+
+		reconciler, client := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcileManagementRPCTLSSecret(ctx, mint); err != nil {
+			t.Fatalf("reconcileManagementRPCTLSSecret() error = %v", err)
+		}
+
+		secret := &corev1.Secret{}
+		if err := client.Get(ctx, ctrlclient.ObjectKey{Name: "custom-management-rpc-tls", Namespace: mint.Namespace}, secret); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		for _, key := range []string{"ca.pem", "server.pem", "server.key", "client.pem", "client.key"} {
+			if _, ok := secret.Data[key]; !ok {
+				t.Fatalf("expected TLS secret to contain %q", key)
+			}
+		}
+	})
+
+	t.Run("does not overwrite an existing TLS secret", func(t *testing.T) {
+		mint := unitTestCashuMint("management-rpc-existing")
+		mint.Spec.ManagementRPC = &mintv1alpha1.ManagementRPCConfig{
+			Enabled:      true,
+			TLSSecretRef: &corev1.LocalObjectReference{Name: "existing-management-rpc-tls"},
+		}
+		existingSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "existing-management-rpc-tls",
+				Namespace: mint.Namespace,
+			},
+			Data: map[string][]byte{
+				"ca.pem": []byte("custom-ca"),
+			},
+		}
+
+		reconciler, client := newUnitTestReconciler(t, mint, existingSecret)
+		if err := reconciler.reconcileManagementRPCTLSSecret(ctx, mint); err != nil {
+			t.Fatalf("reconcileManagementRPCTLSSecret() error = %v", err)
+		}
+
+		updated := &corev1.Secret{}
+		if err := client.Get(ctx, ctrlclient.ObjectKeyFromObject(existingSecret), updated); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if got := string(updated.Data["ca.pem"]); got != "custom-ca" {
+			t.Fatalf("ca.pem = %q, want existing data to be preserved", got)
+		}
+		if _, ok := updated.Data["server.pem"]; ok {
+			t.Fatalf("expected existing secret not to be regenerated, got server.pem in %+v", updated.Data)
 		}
 	})
 }

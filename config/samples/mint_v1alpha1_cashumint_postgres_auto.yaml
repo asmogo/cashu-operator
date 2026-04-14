@@ -3,7 +3,7 @@ kind: CashuMint
 metadata:
   name: cashumint-postgres
 spec:
-  image: ghcr.io/cashubtc/cdk-mintd:v0.15.0
+  image: cashubtc/mintd:0.15.0
   podSecurityContext:
     runAsUser: 1000
     fsGroup: 1000
