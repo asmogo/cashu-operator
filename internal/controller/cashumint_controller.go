@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"time"
 
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -70,6 +71,7 @@ type CashuMintReconciler struct {
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=podmonitors,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
@@ -318,6 +320,12 @@ func (r *CashuMintReconciler) reconcileCoreResources(ctx context.Context, cashuM
 	logger.Info("Reconciling Service")
 	if err := r.reconcileService(ctx, cashuMint); err != nil {
 		return fmt.Errorf("failed to reconcile Service: %w", err)
+	}
+
+	// Phase 7: Reconcile PodMonitor for metrics scraping
+	logger.Info("Reconciling PodMonitor")
+	if err := r.reconcilePodMonitor(ctx, cashuMint); err != nil {
+		return fmt.Errorf("failed to reconcile PodMonitor: %w", err)
 	}
 
 	return nil
@@ -832,6 +840,47 @@ func (r *CashuMintReconciler) reconcileService(ctx context.Context, cashuMint *m
 		logger.Info("Orchard Service reconciled", "service", orchardService.Name)
 	}
 
+	return nil
+}
+
+// reconcilePodMonitor reconciles the PodMonitor for mint metrics scraping.
+func (r *CashuMintReconciler) reconcilePodMonitor(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	logger := log.FromContext(ctx)
+
+	if cashuMint.Spec.Prometheus == nil || !cashuMint.Spec.Prometheus.Enabled {
+		podMonitor := &monitoringv1.PodMonitor{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      cashuMint.Name,
+				Namespace: cashuMint.Namespace,
+			},
+		}
+		if err := r.Delete(ctx, podMonitor); err != nil {
+			if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to delete PodMonitor: %w", err)
+		}
+
+		logger.Info("PodMonitor deleted", "podMonitor", podMonitor.Name)
+		return nil
+	}
+
+	podMonitor, err := generators.GeneratePodMonitor(cashuMint, r.Scheme)
+	if err != nil {
+		return fmt.Errorf("failed to generate PodMonitor: %w", err)
+	}
+	if podMonitor == nil {
+		return nil
+	}
+
+	if err := applyResource(ctx, r.Client, podMonitor); err != nil {
+		if meta.IsNoMatchError(err) {
+			return fmt.Errorf("failed to apply PodMonitor: Prometheus Operator PodMonitor CRD is not installed: %w", err)
+		}
+		return fmt.Errorf("failed to apply PodMonitor: %w", err)
+	}
+
+	logger.Info("PodMonitor reconciled", "podMonitor", podMonitor.Name)
 	return nil
 }
 

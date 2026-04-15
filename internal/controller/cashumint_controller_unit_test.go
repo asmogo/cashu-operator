@@ -7,10 +7,12 @@ import (
 	"testing"
 
 	certmanagerv1 "github.com/cert-manager/cert-manager/pkg/apis/certmanager/v1"
+	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -19,6 +21,7 @@ import (
 	"k8s.io/client-go/tools/record"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	mintv1alpha1 "github.com/asmogo/cashu-operator/api/v1alpha1"
 	"github.com/asmogo/cashu-operator/internal/controller/generators"
@@ -263,6 +266,346 @@ func TestReconcileCertificateCreatesCertificate(t *testing.T) {
 	}
 }
 
+func TestReconcilePodMonitor(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("creates PodMonitor when metrics are enabled", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-enabled")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+		reconciler, client := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		podMonitor := &monitoringv1.PodMonitor{}
+		if err := client.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, podMonitor); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if len(podMonitor.Spec.PodMetricsEndpoints) != 1 {
+			t.Fatalf("endpoint count = %d, want 1", len(podMonitor.Spec.PodMetricsEndpoints))
+		}
+		if podMonitor.Spec.PodMetricsEndpoints[0].Port == nil || *podMonitor.Spec.PodMetricsEndpoints[0].Port != "metrics" {
+			t.Fatalf("endpoint port = %v, want metrics", podMonitor.Spec.PodMetricsEndpoints[0].Port)
+		}
+	})
+
+	t.Run("deletes PodMonitor when metrics are disabled", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-disabled")
+		existing := &monitoringv1.PodMonitor{
+			ObjectMeta: metav1.ObjectMeta{Name: mint.Name, Namespace: mint.Namespace},
+		}
+
+		reconciler, client := newUnitTestReconciler(t, mint, existing)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		err := client.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, &monitoringv1.PodMonitor{})
+		if !apierrors.IsNotFound(err) {
+			t.Fatalf("expected PodMonitor to be deleted, got %v", err)
+		}
+	})
+
+	t.Run("no-op when metrics are disabled and no PodMonitor exists", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-disabled-no-existing")
+		// Prometheus is nil — no PodMonitor pre-exists either.
+		reconciler, _ := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+	})
+
+	t.Run("no-op when metrics are explicitly disabled via Enabled=false", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-explicitly-disabled")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: false}
+		reconciler, _ := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+	})
+
+	t.Run("sets correct labels on PodMonitor", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-labels")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+		reconciler, c := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		podMonitor := &monitoringv1.PodMonitor{}
+		if err := c.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, podMonitor); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		wantLabels := map[string]string{
+			"app.kubernetes.io/name":       "cashu-mint",
+			"app.kubernetes.io/instance":   mint.Name,
+			"app.kubernetes.io/managed-by": "cashu-operator",
+		}
+		for k, want := range wantLabels {
+			if got := podMonitor.Labels[k]; got != want {
+				t.Errorf("label %q = %q, want %q", k, got, want)
+			}
+		}
+	})
+
+	t.Run("sets owner reference on PodMonitor", func(t *testing.T) {
+		mint := unitTestCashuMint("metrics-ownerref")
+		mint.UID = "test-uid-123"
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+		reconciler, c := newUnitTestReconciler(t, mint)
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("reconcilePodMonitor() error = %v", err)
+		}
+
+		podMonitor := &monitoringv1.PodMonitor{}
+		if err := c.Get(ctx, ctrlclient.ObjectKey{Name: mint.Name, Namespace: mint.Namespace}, podMonitor); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		if len(podMonitor.OwnerReferences) == 0 {
+			t.Fatal("expected owner reference to be set on PodMonitor")
+		}
+		if podMonitor.OwnerReferences[0].Name != mint.Name {
+			t.Errorf("owner reference name = %q, want %q", podMonitor.OwnerReferences[0].Name, mint.Name)
+		}
+	})
+}
+
+func TestReconcilePodMonitor_ErrorPaths(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns error when delete fails with unexpected error", func(t *testing.T) {
+		mint := unitTestCashuMint("pm-delete-fail")
+		// Prometheus is nil so reconcilePodMonitor will attempt a delete.
+		existing := &monitoringv1.PodMonitor{
+			ObjectMeta: metav1.ObjectMeta{Name: mint.Name, Namespace: mint.Namespace},
+		}
+		deleteErr := errors.New("unexpected delete failure")
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Delete: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.DeleteOption) error {
+				if _, ok := obj.(*monitoringv1.PodMonitor); ok {
+					return deleteErr
+				}
+				return c.Delete(ctx, obj, opts...)
+			},
+		}, mint, existing)
+
+		err := reconciler.reconcilePodMonitor(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, deleteErr) {
+			t.Errorf("error = %v, want to wrap %v", err, deleteErr)
+		}
+	})
+
+	t.Run("returns error when applyResource (Patch) fails", func(t *testing.T) {
+		mint := unitTestCashuMint("pm-apply-fail")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+		patchErr := errors.New("patch failed")
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.PatchOption) error {
+				if _, ok := obj.(*monitoringv1.PodMonitor); ok {
+					return patchErr
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcilePodMonitor(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, patchErr) {
+			t.Errorf("error = %v, want to wrap %v", err, patchErr)
+		}
+	})
+}
+
+func TestReconcileCoreResources_ErrorPaths(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("propagates reconcileDeployment error", func(t *testing.T) {
+		mint := unitTestCashuMint("core-deploy-fail")
+		patchErr := errors.New("deployment patch failed")
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.PatchOption) error {
+				if _, ok := obj.(*appsv1.Deployment); ok {
+					return patchErr
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcileCoreResources(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, patchErr) {
+			t.Errorf("error = %v, want to wrap %v", err, patchErr)
+		}
+	})
+
+	t.Run("propagates reconcileService error", func(t *testing.T) {
+		mint := unitTestCashuMint("core-service-fail")
+		patchErr := errors.New("service patch failed")
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.PatchOption) error {
+				if _, ok := obj.(*corev1.Service); ok {
+					return patchErr
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcileCoreResources(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, patchErr) {
+			t.Errorf("error = %v, want to wrap %v", err, patchErr)
+		}
+	})
+
+	t.Run("propagates reconcilePodMonitor error", func(t *testing.T) {
+		mint := unitTestCashuMint("core-pm-fail")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+		patchErr := errors.New("podmonitor patch failed")
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.PatchOption) error {
+				if _, ok := obj.(*monitoringv1.PodMonitor); ok {
+					return patchErr
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcileCoreResources(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, patchErr) {
+			t.Errorf("error = %v, want to wrap %v", err, patchErr)
+		}
+	})
+
+	t.Run("propagates reconcileManagementRPCTLSSecret error via Create", func(t *testing.T) {
+		mint := unitTestCashuMint("core-mgmt-tls-fail")
+		mint.Spec.ManagementRPC = &mintv1alpha1.ManagementRPCConfig{
+			Enabled:      true,
+			TLSSecretRef: &corev1.LocalObjectReference{Name: "mgmt-tls"},
+		}
+		createErr := errors.New("create tls secret failed")
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Create: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+				if _, ok := obj.(*corev1.Secret); ok {
+					return createErr
+				}
+				return c.Create(ctx, obj, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcileCoreResources(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, createErr) {
+			t.Errorf("error = %v, want to wrap %v", err, createErr)
+		}
+	})
+
+	t.Run("propagates reconcileConfigMap error via Create", func(t *testing.T) {
+		mint := unitTestCashuMint("core-configmap-fail")
+		createErr := errors.New("create configmap failed")
+		patchCallCount := 0
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.PatchOption) error {
+				if _, ok := obj.(*corev1.ConfigMap); ok {
+					patchCallCount++
+					return createErr
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcileCoreResources(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, createErr) {
+			t.Errorf("error = %v, want to wrap %v", err, createErr)
+		}
+	})
+
+	t.Run("propagates reconcilePVC error", func(t *testing.T) {
+		mint := unitTestCashuMint("core-pvc-fail")
+		// SQLite requires PVC reconciliation
+		patchErr := errors.New("pvc patch failed")
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.PatchOption) error {
+				if _, ok := obj.(*corev1.PersistentVolumeClaim); ok {
+					return patchErr
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcileCoreResources(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, patchErr) {
+			t.Errorf("error = %v, want to wrap %v", err, patchErr)
+		}
+	})
+}
+
+func TestReconcilePodMonitor_NoMatchError(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("returns wrapped error when apply returns NoKindMatchError (CRD not installed)", func(t *testing.T) {
+		mint := unitTestCashuMint("pm-no-match")
+		mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+		noMatchErr := &apimeta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "monitoring.coreos.com", Kind: "PodMonitor"}}
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Patch: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, patch ctrlclient.Patch, opts ...ctrlclient.PatchOption) error {
+				if _, ok := obj.(*monitoringv1.PodMonitor); ok {
+					return noMatchErr
+				}
+				return c.Patch(ctx, obj, patch, opts...)
+			},
+		}, mint)
+
+		err := reconciler.reconcilePodMonitor(ctx, mint)
+		if err == nil {
+			t.Fatal("expected error, got nil")
+		}
+		if !errors.Is(err, noMatchErr) {
+			t.Errorf("error = %v, want to wrap %v", err, noMatchErr)
+		}
+	})
+
+	t.Run("no-op when delete returns NoKindMatchError (CRD not installed)", func(t *testing.T) {
+		mint := unitTestCashuMint("pm-delete-no-match")
+		// Prometheus nil: will attempt delete, CRD not installed should be treated as no-op.
+		noMatchErr := &apimeta.NoKindMatchError{GroupKind: schema.GroupKind{Group: "monitoring.coreos.com", Kind: "PodMonitor"}}
+		reconciler := newUnitTestReconcilerWithInterceptor(t, interceptor.Funcs{
+			Delete: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.DeleteOption) error {
+				if _, ok := obj.(*monitoringv1.PodMonitor); ok {
+					return noMatchErr
+				}
+				return c.Delete(ctx, obj, opts...)
+			},
+		}, mint)
+
+		if err := reconciler.reconcilePodMonitor(ctx, mint); err != nil {
+			t.Fatalf("expected no error when CRD not installed, got %v", err)
+		}
+	})
+}
+
 func TestReconcileOptionalMnemonic(t *testing.T) {
 	ctx := context.Background()
 
@@ -387,6 +730,7 @@ func newUnitTestReconciler(t *testing.T, objects ...ctrlclient.Object) (*CashuMi
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(mintv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
+	utilruntime.Must(monitoringv1.AddToScheme(scheme))
 
 	builder := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&mintv1alpha1.CashuMint{})
 	if len(objects) > 0 {
@@ -418,6 +762,28 @@ func unitTestCashuMint(name string) *mintv1alpha1.CashuMint {
 				FakeWallet: &mintv1alpha1.FakeWalletConfig{},
 			},
 		},
+	}
+}
+
+func newUnitTestReconcilerWithInterceptor(t *testing.T, funcs interceptor.Funcs, objects ...ctrlclient.Object) *CashuMintReconciler {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(mintv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(certmanagerv1.AddToScheme(scheme))
+	utilruntime.Must(monitoringv1.AddToScheme(scheme))
+
+	builder := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&mintv1alpha1.CashuMint{}).WithInterceptorFuncs(funcs)
+	if len(objects) > 0 {
+		builder = builder.WithObjects(objects...)
+	}
+	client := builder.Build()
+
+	return &CashuMintReconciler{
+		Client:   client,
+		Scheme:   scheme,
+		Recorder: record.NewFakeRecorder(16),
 	}
 }
 

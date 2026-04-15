@@ -529,6 +529,7 @@ kubectl label namespace <ingress-namespace> cashu.asmogo.github.io/allow-mint-in
 
 - Monitor `kubectl describe cashumint <name>` for status conditions.
 - Use `kubectl get all -l app.kubernetes.io/instance=<mint>` to inspect managed resources.
+- Set `spec.prometheus.enabled: true` to expose mint metrics and have the operator create a same-namespace `PodMonitor` automatically. This requires the Prometheus Operator `PodMonitor` CRD to be installed in the cluster.
 - When updating configuration, edit the `CashuMint` CR. Operator triggers rolling deployment if config hash changes.
 - Rollout dependency gating blocks Deployment/Service/Ingress reconciliation until required Secret references exist and auto-provisioned PostgreSQL (if enabled) is ready.
 - While blocked, `Ready=False` and `LightningReady=False` with reason `DependenciesNotReady`, and reconciliation retries every 10 seconds.
