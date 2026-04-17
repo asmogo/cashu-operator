@@ -1,24 +1,18 @@
-# Minimal CashuMint for testing (requires the referenced Secret in the same namespace)
+# Minimal quick-start CashuMint.
+# This sample is self-contained so you can verify the operator before creating
+# any external Secrets or payment backend dependencies.
 apiVersion: mint.cashu.asmogo.github.io/v1alpha1
 kind: CashuMint
 metadata:
   name: cashumint-minimal
 spec:
-  image: cashubtc/mintd:0.15.0
-  podSecurityContext:
-    runAsUser: 1000
-    fsGroup: 1000
-    runAsNonRoot: true
-
-  # Override container security context
-  containerSecurityContext:
-    allowPrivilegeEscalation: false
-    runAsNonRoot: true
-    capabilities:
-      drop:
-        - ALL
   mintInfo:
-    url: http://cashu.dev.ucash.space
+    # Good for local port-forward testing. Replace with your real hostname when
+    # you expose the mint through an ingress.
+    url: http://localhost:8085
+    autoGenerateMnemonic: true
+    name: Minimal Cashu Mint
+    description: Quick-start mint using fakeWallet and SQLite
   database:
     engine: sqlite
     sqlite:

@@ -1,0 +1,35 @@
+site_name: Cashu Mint Operator
+site_url: https://asmogo.github.io/cashu-operator/
+repo_url: https://github.com/asmogo/cashu-operator
+repo_name: asmogo/cashu-operator
+edit_uri: edit/main/docs/
+docs_dir: docs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Overview: index.md
+  - Getting started: getting-started.md
+  - Deployment guide: deployment-guide.md
+  - Payment processors: payment-processors.md
+  - Sample catalog: samples.md
+  - API reference: api-reference.md
+  - Migration guide: migration-guide.md
+  - Troubleshooting: troubleshooting.md

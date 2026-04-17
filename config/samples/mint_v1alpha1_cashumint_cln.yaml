@@ -1,0 +1,29 @@
+# CashuMint backed by Core Lightning.
+# The operator passes the RPC path through to CDK; make sure the CLN socket is
+# reachable inside the mint container at the configured path.
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-cln
+spec:
+  mintInfo:
+    url: https://cln-mint.example.com
+    autoGenerateMnemonic: true
+    name: CLN Cashu Mint
+    description: Cashu mint using a Core Lightning RPC socket
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 10Gi
+        version: "16"
+  paymentBackend:
+    cln:
+      rpcPath: /var/run/cln/lightning-rpc
+      bolt12: true
+  service:
+    type: ClusterIP
+  logging:
+    level: info
+    format: json

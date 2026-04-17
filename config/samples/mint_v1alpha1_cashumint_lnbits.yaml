@@ -1,0 +1,41 @@
+# CashuMint backed by LNBits.
+# Create the referenced Secret first:
+#   kubectl create secret generic lnbits-credentials \
+#     --from-literal=admin-api-key='<admin key>' \
+#     --from-literal=invoice-api-key='<invoice key>'
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-lnbits
+spec:
+  mintInfo:
+    url: https://lnbits-mint.example.com
+    autoGenerateMnemonic: true
+    name: LNBits Cashu Mint
+    description: Cashu mint using LNBits as the payment backend
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 10Gi
+        version: "16"
+  paymentBackend:
+    lnbits:
+      api: https://legend.lnbits.com
+      adminApiKeySecretRef:
+        name: lnbits-credentials
+        key: admin-api-key
+      invoiceApiKeySecretRef:
+        name: lnbits-credentials
+        key: invoice-api-key
+      retroApi: false
+  ingress:
+    enabled: true
+    host: lnbits-mint.example.com
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt-prod
+        issuerKind: ClusterIssuer

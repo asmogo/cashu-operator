@@ -1,0 +1,70 @@
+# CashuMint showing a few advanced CDK/operator features together:
+# - OIDC auth
+# - Redis-backed HTTP cache
+# - management RPC
+# - Prometheus metrics
+# - limits and quote TTLs
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-auth-cache
+spec:
+  mintInfo:
+    url: https://auth-mint.example.com
+    autoGenerateMnemonic: true
+    name: Authenticated Cashu Mint
+    description: Cashu mint with OIDC auth, Redis cache, and metrics enabled
+    useKeysetV2: true
+    quoteTtl:
+      mintTtl: 300
+      meltTtl: 60
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 10Gi
+        version: "16"
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+  auth:
+    enabled: true
+    openidDiscovery: https://issuer.example.com/.well-known/openid-configuration
+    openidClientId: cashu-mint
+    mint: clear
+    getMintQuote: clear
+    checkMintQuote: clear
+    melt: blind
+    getMeltQuote: clear
+    checkMeltQuote: clear
+    swap: blind
+    restore: clear
+    checkProofState: clear
+    database:
+      postgres:
+        urlSecretRef:
+          name: cashumint-auth-db
+          key: DATABASE_URL
+  httpCache:
+    backend: redis
+    ttl: 120
+    tti: 120
+    redis:
+      keyPrefix: cashumint-auth
+      connectionStringSecretRef:
+        name: cashumint-redis
+        key: REDIS_URL
+  managementRPC:
+    enabled: true
+  prometheus:
+    enabled: true
+  limits:
+    maxInputs: 128
+    maxOutputs: 256
+  service:
+    type: ClusterIP
+  logging:
+    level: info
+    format: json

@@ -1,0 +1,47 @@
+# CashuMint showing the optional LDK node sidecar.
+# This sample uses SQLite so the shared /data volume is persistent for both the
+# mint and the LDK node.
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-ldk-node
+spec:
+  mintInfo:
+    url: https://ldk-mint.example.com
+    autoGenerateMnemonic: true
+    name: LDK Sidecar Mint
+    description: Cashu mint with an LDK node sidecar configuration
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  storage:
+    size: 20Gi
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+  ldkNode:
+    enabled: true
+    bitcoinNetwork: signet
+    chainSourceType: bitcoinrpc
+    bitcoinRpc:
+      host: bitcoin.default.svc.cluster.local
+      port: 38332
+      userSecretRef:
+        name: bitcoin-rpc
+        key: username
+      passwordSecretRef:
+        name: bitcoin-rpc
+        key: password
+    mnemonicSecretRef:
+      name: ldk-node-secrets
+      key: mnemonic
+    host: 0.0.0.0
+    port: 8090
+    gossipSourceType: rgs
+    rgsUrl: https://rgs.example.com/snapshot
+    webserverHost: 127.0.0.1
+    webserverPort: 8888
+  service:
+    type: ClusterIP

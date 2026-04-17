@@ -1,9 +1,29 @@
+# Starter template for a new CashuMint.
+# Keep the blocks you need and delete the rest before applying in production.
 apiVersion: mint.cashu.asmogo.github.io/v1alpha1
 kind: CashuMint
 metadata:
-  labels:
-    app.kubernetes.io/name: cashu-operator
-    app.kubernetes.io/managed-by: kustomize
-  name: cashumint-sample
+  name: cashumint-template
 spec:
-  # TODO(user): Add fields here
+  mintInfo:
+    url: https://mint.example.com
+    autoGenerateMnemonic: true
+    name: Template Cashu Mint
+    description: Copy this sample and customize it for your own mint
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 10Gi
+        version: "16"
+  paymentBackend:
+    # Exactly one backend must be set: lnd, cln, lnbits, fakeWallet, or grpcProcessor.
+    fakeWallet:
+      supportedUnits:
+        - sat
+  service:
+    type: ClusterIP
+  logging:
+    level: info
+    format: json
