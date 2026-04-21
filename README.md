@@ -76,9 +76,43 @@ kubectl delete -f https://github.com/asmogo/cashu-operator/releases/latest/downl
 
 ## Development
 
+### Local development with Tilt + k3d
+
+The recommended local workflow uses the dedicated k3d cluster defined in [`ctlptl-config.yaml`](ctlptl-config.yaml).
+
+```bash
+make tilt-up
+```
+
+That command creates or updates a dedicated `cashu-operator-dev` k3d cluster with a local registry, switches `kubectl` to `k3d-cashu-operator-dev`, and starts Tilt against that context.
+
+Once Tilt is running:
+
+1. `codegen` regenerates manifests and deepcopy code when the API changes.
+2. `unit-tests` is available as a manual Tilt resource for `make test`.
+3. `demo-mint` is available as a manual Tilt resource to apply a minimal `CashuMint` from `config/dev/`.
+
+To inspect the demo mint after triggering `demo-mint`:
+
+```bash
+kubectl -n cashu-mints port-forward svc/cashumint-minimal 8085:8085
+curl http://localhost:8085/v1/info
+```
+
+To stop the local loop:
+
+```bash
+make tilt-down
+make dev-cluster-delete
+```
+
 ```bash
 make build          # Build controller binary
 make run            # Run controller locally against active kubeconfig
+make dev-cluster-up # Create/update the dedicated local k3d dev cluster
+make tilt-up        # Start Tilt against the local k3d dev cluster
+make tilt-down      # Stop Tilt and remove Tilt-managed resources
+make dev-reset      # Tear down Tilt-managed resources and delete the dev cluster
 make test           # Run unit tests
 make test-e2e       # Run end-to-end tests (provisions Kind cluster)
 make lint           # Run linter

@@ -45,7 +45,7 @@ Evaluate the Lightning payment processor your mint needs:
 - **Orchard**: when enabled, Orchard gets its own PVC for application state even if the mint database is PostgreSQL. Size `spec.orchard.storage` separately from the mint database/storage.
 - **Backups**: For auto-provisioned PostgreSQL, you can configure scheduled S3-compatible `pg_dump` backups via `spec.backup`.
 - **Backup scope**: Current operator-managed backups target auto-provisioned PostgreSQL and upload dumps to object storage.
-- **CDK v0.15 default + migration safety**: The default mint image is `cashubtc/mintd:0.15.0`. For PostgreSQL mints, take a verified database backup immediately before rollout/upgrades because CDK v0.15 performs database migrations.
+- **CDK default + migration safety**: The default mint image is `cashubtc/mintd:0.16`. For PostgreSQL mints, take a verified database backup immediately before rollout/upgrades because CDK performs database migrations across minor versions.
 
 ---
 

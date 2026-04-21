@@ -1755,7 +1755,7 @@ spec:
                 - backend
                 type: object
               image:
-                default: cashubtc/mintd:0.15.0
+                default: cashubtc/mintd:0.16
                 description: Image specifies the container image to use
                 type: string
               imagePullPolicy:

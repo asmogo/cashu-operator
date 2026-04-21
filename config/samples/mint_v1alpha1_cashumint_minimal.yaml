@@ -4,7 +4,7 @@ kind: CashuMint
 metadata:
   name: cashumint-minimal
 spec:
-  image: cashubtc/mintd:0.15.0
+  image: cashubtc/mintd:0.15.2
   podSecurityContext:
     runAsUser: 1000
     fsGroup: 1000

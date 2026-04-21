@@ -4,7 +4,7 @@ kind: CashuMint
 metadata:
   name: cashumint-orchard-sqlite
 spec:
-  image: cashubtc/mintd:0.15.0
+  image: cashubtc/mintd:0.16
   mintInfo:
     url: https://mint-sqlite.example.com
     mnemonicSecretRef:

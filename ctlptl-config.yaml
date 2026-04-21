@@ -1,11 +1,32 @@
 apiVersion: ctlptl.dev/v1alpha1
 kind: Registry
-name: ctlptl-registry
+name: cashu-operator-registry
 port: 5005
 ---
 apiVersion: ctlptl.dev/v1alpha1
 kind: Cluster
-product: minikube
-registry: ctlptl-registry
-kindV1Alpha1:
-  name: kind-kind
+# ctlptl expects the kube context name for k3d clusters, which must keep the k3d- prefix.
+name: k3d-cashu-operator-dev
+product: k3d
+registry: cashu-operator-registry
+k3d:
+  v1alpha5Simple:
+    servers: 1
+    # Expose the k3d loadbalancer on localhost so ingress-nginx is reachable
+    # at http://<host>.localhost (e.g. http://mint.localhost).
+    ports:
+      - port: 80:80
+        nodeFilters:
+          - loadbalancer
+      - port: 443:443
+        nodeFilters:
+          - loadbalancer
+    options:
+      k3d:
+        wait: true
+        timeout: "120s"
+      k3s:
+        extraArgs:
+          - arg: --disable=traefik
+            nodeFilters:
+              - server:*

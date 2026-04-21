@@ -1,0 +1,40 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-minimal
+  namespace: cashu-mints
+spec:
+  image: cashubtc/mintd:0.16
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+  mintInfo:
+    url: http://mint.localhost
+    # mintd 0.16+ requires a seed or a remote signatory. Let the operator
+    # provision a BIP39 mnemonic Secret (<mint-name>-mnemonic) automatically.
+    autoGenerateMnemonic: true
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  storage:
+    size: 1Gi
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+  ingress:
+    enabled: true
+    className: nginx
+    host: mint.localhost
+    annotations:
+      # Local development: no TLS, skip redirect to https.
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"

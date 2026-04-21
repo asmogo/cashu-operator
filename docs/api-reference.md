@@ -44,7 +44,7 @@ spec:
 
 | Field                      | Type                                    | Required | Default                   | Validation                                     |
 |---------------------------|-----------------------------------------|----------|---------------------------|------------------------------------------------|
-| `image`                   | string                                  | No       | `cashubtc/mintd:0.15.0` | —                                      |
+| `image`                   | string                                  | No       | `cashubtc/mintd:0.16`   | —                                      |
 | `imagePullPolicy`         | string (`Always`, `Never`, `IfNotPresent`) | No    | `IfNotPresent`            | Enum                                          |
 | `imagePullSecrets`        | []`LocalObjectReference`                | No       | —                         | —                                              |
 | `replicas`                | int32                                   | No       | 1                         | Min=1, Max=1                                   |
@@ -411,7 +411,7 @@ Each condition is represented with `type`, `status`, `reason`, `message`, and `o
 - `orchard.setupKeySecretRef` is required when Orchard is enabled.
 - Orchard currently supports sqlite and PostgreSQL mint databases; `redb` is not supported for Orchard introspection.
 - Resource requests must not exceed limits.
-- Default `spec.image` is `cashubtc/mintd:0.15.0`; for PostgreSQL mints using `mintd:0.15*`, take a verified backup before rollout because CDK v0.15 performs database migrations.
+- Default `spec.image` is `cashubtc/mintd:0.16`; for PostgreSQL mints, take a verified backup before rollout because CDK performs database migrations across minor versions.
 - Most optional numeric/string fields have server-side defaults (see sections above).
 
 ---
@@ -427,7 +427,7 @@ metadata:
   name: cashumint-prod
   namespace: cashu
 spec:
-  image: cashubtc/mintd:0.15.0
+  image: cashubtc/mintd:0.16
   mintInfo:
     url: https://mint.example.com
     mnemonicSecretRef:

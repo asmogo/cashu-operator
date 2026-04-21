@@ -6,7 +6,7 @@ kind: CashuMint
 metadata:
   name: cashumint-orchard-postgres
 spec:
-  image: cashubtc/mintd:0.15.0
+  image: cashubtc/mintd:0.16
   mintInfo:
     url: https://mint-postgres.example.com
     # autoGenerateMnemonic instructs the operator to create and manage a BIP39
