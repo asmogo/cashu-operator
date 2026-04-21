@@ -32,7 +32,7 @@ kind: CashuMint
 metadata:
   name: cashumint-backup-demo
 spec:
-  image: cashubtc/mintd:0.15.0
+  image: cashubtc/mintd:0.16
 
   mintInfo:
     name: "Backup Demo Mint"

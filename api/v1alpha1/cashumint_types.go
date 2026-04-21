@@ -35,7 +35,7 @@ const (
 	DefaultStorageSize          = "10Gi"
 	DefaultClusterIssuerKind    = "ClusterIssuer"
 	DefaultIngressClassName     = "nginx"
-	DefaultMintImage            = "cashubtc/mintd:0.15.0"
+	DefaultMintImage            = "cashubtc/mintd:0.16"
 	DefaultOrchardSQLiteImage   = "ghcr.io/cashubtc/orchard-mintdb-sqlite:1.8.1"
 	DefaultOrchardPostgresImage = "ghcr.io/cashubtc/orchard-mintdb-postgres:1.8.1"
 )
@@ -98,7 +98,7 @@ type CashuMint struct {
 // CashuMintSpec defines the desired state of CashuMint
 type CashuMintSpec struct {
 	// Image specifies the container image to use
-	// +kubebuilder:default="cashubtc/mintd:0.15.0"
+	// +kubebuilder:default="cashubtc/mintd:0.16"
 	// +optional
 	Image string `json:"image,omitempty"`
 

@@ -41,6 +41,11 @@ help: ## Display this help.
 
 ##@ Development
 
+DEV_CLUSTER ?= cashu-operator-dev
+DEV_KUBE_CONTEXT ?= k3d-$(DEV_CLUSTER)
+CTLPTL ?= ctlptl
+TILT ?= tilt
+
 .PHONY: manifests
 manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd:allowDangerousTypes=true webhook paths="./..." output:crd:artifacts:config=config/crd/bases
@@ -116,6 +121,44 @@ build: manifests generate fmt vet ## Build manager binary.
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
+
+##@ Local Development
+
+.PHONY: dev-cluster-up
+dev-cluster-up: ## Create or update the dedicated local k3d development cluster.
+	@command -v $(CTLPTL) >/dev/null 2>&1 || { \
+		echo "ctlptl is not installed. Please install ctlptl manually."; \
+		exit 1; \
+	}
+	$(CTLPTL) apply -f ctlptl-config.yaml
+	$(KUBECTL) config use-context $(DEV_KUBE_CONTEXT) >/dev/null
+
+.PHONY: dev-cluster-delete
+dev-cluster-delete: ## Delete the dedicated local k3d development cluster and registry.
+	@command -v $(CTLPTL) >/dev/null 2>&1 || { \
+		echo "ctlptl is not installed. Please install ctlptl manually."; \
+		exit 1; \
+	}
+	$(CTLPTL) delete -f ctlptl-config.yaml --cascade=true --ignore-not-found
+
+.PHONY: tilt-up
+tilt-up: dev-cluster-up ## Start Tilt against the dedicated local k3d development cluster.
+	@command -v $(TILT) >/dev/null 2>&1 || { \
+		echo "Tilt is not installed. Please install Tilt manually."; \
+		exit 1; \
+	}
+	$(TILT) up --context $(DEV_KUBE_CONTEXT)
+
+.PHONY: tilt-down
+tilt-down: ## Stop Tilt and remove resources from the dedicated local k3d development cluster.
+	@command -v $(TILT) >/dev/null 2>&1 || { \
+		echo "Tilt is not installed. Please install Tilt manually."; \
+		exit 1; \
+	}
+	$(TILT) down --context $(DEV_KUBE_CONTEXT)
+
+.PHONY: dev-reset
+dev-reset: tilt-down dev-cluster-delete ## Tear down the full local Tilt + k3d development environment.
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
 # (i.e. docker build --platform linux/arm64). However, you must enable docker buildKit for it.

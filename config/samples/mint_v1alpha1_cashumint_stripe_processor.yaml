@@ -3,7 +3,7 @@ kind: CashuMint
 metadata:
   name: cashumint-stripe-processor
 spec:
-  image: cashubtc/mintd:0.15.0
+  image: cashubtc/mintd:0.16
   mintInfo:
     url: https://stripe-mint.example.com
     name: "Stripe Cashu Mint"

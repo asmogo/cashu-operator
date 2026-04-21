@@ -1,18 +1,15 @@
-# Minimal quick-start CashuMint.
-# This sample is self-contained so you can verify the operator before creating
-# any external Secrets or payment backend dependencies.
 apiVersion: mint.cashu.asmogo.github.io/v1alpha1
 kind: CashuMint
 metadata:
   name: cashumint-minimal
+  namespace: cashu-mints
 spec:
-  image: cashubtc/mintd:0.15.2
+  image: cashubtc/mintd:0.16
   podSecurityContext:
     runAsUser: 1000
     fsGroup: 1000
     runAsNonRoot: true
 
-  # Override container security context
   containerSecurityContext:
     allowPrivilegeEscalation: false
     runAsNonRoot: true
@@ -20,19 +17,24 @@ spec:
       drop:
         - ALL
   mintInfo:
-    # Good for local port-forward testing. Replace with your real hostname when
-    # you expose the mint through an ingress.
-    url: http://localhost:8085
+    url: http://mint.localhost
+    # mintd 0.16+ requires a seed or a remote signatory. Let the operator
+    # provision a BIP39 mnemonic Secret (<mint-name>-mnemonic) automatically.
     autoGenerateMnemonic: true
-    name: Minimal Cashu Mint
-    description: Quick-start mint using fakeWallet and SQLite
   database:
     engine: sqlite
     sqlite:
       dataDir: /data
   storage:
-    size: 5Gi
+    size: 1Gi
   paymentBackend:
     fakeWallet:
       supportedUnits:
         - sat
+  ingress:
+    enabled: true
+    className: nginx
+    host: mint.localhost
+    annotations:
+      # Local development: no TLS, skip redirect to https.
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"

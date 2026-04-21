@@ -1,0 +1,55 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-orchard
+spec:
+  image: cashubtc/mintd:0.16
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+  mintInfo:
+    url: http://mint-orchard.localhost
+    # mintd 0.16+ requires a seed; let the operator manage a BIP39 Secret.
+    autoGenerateMnemonic: true
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  storage:
+    size: 1Gi
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+  # Orchard talks to the mint over the management RPC; enable it.
+  managementRPC:
+    enabled: true
+  orchard:
+    enabled: true
+    setupKeySecretRef:
+      name: orchard-setup
+      key: setup-key
+    storage:
+      size: 1Gi
+    service:
+      type: ClusterIP
+    ingress:
+      enabled: true
+      className: nginx
+      host: orchard.localhost
+      annotations:
+        # Local development: no TLS, skip redirect to https.
+        nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  ingress:
+    enabled: true
+    className: nginx
+    host: mint-orchard.localhost
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
