@@ -1,0 +1,6 @@
+namespace: cashu-orchard
+
+resources:
+  - namespace.yaml
+  - orchard-setup-secret.yaml
+  - cashumint-orchard.yaml

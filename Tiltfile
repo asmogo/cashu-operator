@@ -77,6 +77,23 @@ local_resource(
     auto_init=False,
 )
 
+local_resource(
+    'demo-orchard',
+    cmd='kubectl --context %s apply -k config/dev/orchard' % CLUSTER_CONTEXT,
+    deps=['config/dev/orchard'],
+    resource_deps=['manager', 'ingress-nginx'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
+local_resource(
+    'demo-orchard-delete',
+    cmd='kubectl --context %s delete -k config/dev/orchard --ignore-not-found' % CLUSTER_CONTEXT,
+    deps=['config/dev/orchard'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
 k8s_resource(
     'cashu-operator-controller-manager',
     new_name='manager',
