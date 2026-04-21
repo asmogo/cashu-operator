@@ -1,13 +1,22 @@
-## Append samples of your project ##
+## Sample catalog for the documentation site and local experimentation.
+## Copy the manifests you need instead of applying the whole directory in production.
 resources:
+  - mint_v1alpha1_cashumint.yaml
   - mint_v1alpha1_cashumint_minimal.yaml
   - mint_v1alpha1_cashumint_postgres_auto.yaml
   - mint_v1alpha1_cashumint_external_postgres.yaml
   - mint_v1alpha1_cashumint_lnd.yaml
+  - mint_v1alpha1_cashumint_lnbits.yaml
+  - mint_v1alpha1_cashumint_cln.yaml
+  - mint_v1alpha1_cashumint_grpc_processor_external.yaml
+  - mint_v1alpha1_cashumint_backup_s3.yaml
   - mint_v1alpha1_cashumint_orchard_setup_secret.yaml
   - mint_v1alpha1_cashumint_orchard_sqlite.yaml
   - mint_v1alpha1_cashumint_orchard_postgres.yaml
+  - mint_v1alpha1_cashumint_ldk_node.yaml
+  - mint_v1alpha1_cashumint_auth_httpcache.yaml
   - mint_v1alpha1_cashumint_spark_breez.yaml
+  - mint_v1alpha1_cashumint_spark_processor.yaml
   - mint_v1alpha1_cashumint_stripe_processor.yaml
   - mint_v1alpha1_cashumint_production.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
