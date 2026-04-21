@@ -1,547 +1,127 @@
-# Cashu Mint Operator Deployment Guide
+# Deployment guide
 
-_Last updated: 2025-11-01_
+This guide explains how to turn `CashuMint` into a production-ready Kubernetes deployment and how the operator maps the spec to Kubernetes resources.
 
-This guide helps you plan, size, and deploy Cashu mints using the Cashu Mint Kubernetes Operator. It expands on the quick start instructions and provides best practices for production environments.
+## Reconciliation model
 
----
+For every `CashuMint`, the operator continuously reconciles the generated resources instead of treating the manifest as a one-shot install. In practice that means:
 
-## 1. Planning Your Deployment
-
-Before creating a `CashuMint` custom resource (CR), evaluate the environment requirements below.
-
-### 1.1 Choose the Database Backend
-
-| Backend     | Use Case                                  | Durability | Notes |
-|-------------|-------------------------------------------|------------|-------|
-| **PostgreSQL (Auto-Provisioned)** | Production default with automated lifecycle | High | Operator creates StatefulSet, PVC, Service, Secret, and connection URL. Supports configuration of storage class, size, and resource limits. |
-| **External PostgreSQL** | Existing managed PostgreSQL or shared cluster | High | Requires secrets containing connection URL or credentials. Ensures TLS via `tlsMode`. |
-| **SQLite** | Development, POCs, single-node setups     | Medium     | Stores data on local PVC (`spec.storage`). No built-in HA. |
-| **redb**   | Lightweight embedded store                | Medium     | Similar to SQLite but uses `.redb` file. Requires persistent storage for production-like testing. |
-
-### 1.2 Choose the Lightning Backend
-
-Evaluate the Lightning payment processor your mint needs:
-
-| Backend          | Description                                      | Ideal For                | Requirements |
-|------------------|--------------------------------------------------|--------------------------|--------------|
-| **LND**          | LND gRPC integration                             | Production environments  | TLS cert and macaroon in Kubernetes Secret. `address` must include protocol and port. |
-| **CLN**          | Core Lightning RPC socket                        | Self-hosted CLN nodes    | Shared volume or network file system for `rpcPath`. |
-| **LNBits**       | LNBits API integration                           | LNBits-managed wallets   | Admin and invoice keys via Secrets, optional retro API compatibility. |
-| **FakeWallet**   | In-memory mock wallet                            | Development/testing       | Not for production. Supports artificial latency range. |
-| **gRPC Processor** | External or operator-managed gRPC payment processor | Custom enterprise flows  | Use either `grpcProcessor.address`/`port` or `grpcProcessor.processorRef` to `spec.paymentProcessors[]`; TLS secret optional. |
-
-### 1.3 Resource Requirements
-
-- **mintd container**: baseline request ~100m CPU, 128Mi memory. Increase for high traffic.
-- **PostgreSQL auto-provisioned**: default requests 100m CPU, 256Mi memory. Size according to throughput and retention.
-- **LDK node** (optional): additional container ports (P2P + admin). Allocate memory for gossip synchronization (~512Mi) and CPU for channel operations.
-- **Ingress controller**: ensure cluster has an ingress implementation (nginx, traefik, etc.).
-
-### 1.4 Storage Considerations
-
-- **PostgreSQL auto-provisioned**: defaults to `10Gi`. Use production storage class with SSD-backed volumes. Adjust `spec.database.postgres.autoProvisionSpec.storageSize`.
-- **SQLite/redb**: set `spec.storage.size` to desired capacity (include growth over time). Ensure ReadWriteOnce volume suits single replica deployment.
-- **Orchard**: when enabled, Orchard gets its own PVC for application state even if the mint database is PostgreSQL. Size `spec.orchard.storage` separately from the mint database/storage.
-- **Backups**: For auto-provisioned PostgreSQL, you can configure scheduled S3-compatible `pg_dump` backups via `spec.backup`.
-- **Backup scope**: Current operator-managed backups target auto-provisioned PostgreSQL and upload dumps to object storage.
-- **CDK default + migration safety**: The default mint image is `cashubtc/mintd:0.16`. For PostgreSQL mints, take a verified database backup immediately before rollout/upgrades because CDK performs database migrations across minor versions.
-
----
-
-## 2. Database Backend Configuration
-
-### 2.1 SQLite & redb
-
-```yaml
-spec:
-  database:
-    engine: sqlite          # or redb
-    sqlite:
-      dataDir: /data        # default
-  storage:
-    size: 5Gi
-    storageClassName: fast-ssd
-```
-
-**Limitations**
-
-- Single replica only (enforced by CRD).
-- PVC is mandatory for durability.
-- No schema migrations performed; ensure compatibility between mintd versions.
-
-### 2.2 PostgreSQL Auto-Provisioning
-
-```yaml
-spec:
-  database:
-    engine: postgres
-    postgres:
-      autoProvision: true
-      autoProvisionSpec:
-        storageSize: 20Gi
-        storageClassName: fast-ssd
-        version: "16"
-        resources:
-          requests:
-            cpu: 250m
-            memory: 512Mi
-```
-
-- Secret `<mint-name>-postgres-secret` contains generated password and URL. Mint pods automatically use `CDK_MINTD_DATABASE_URL` env var.
-- StatefulSet runs a single replica with `ClusterIP` headless service (`clusterIP: None`).
-- TLS to internal PostgreSQL is disabled (`sslmode=disable`); for strict TLS, bring your own Postgres instance.
-
-**Storage Sizing**
-
-- Estimate 1–2 GiB per million mints (depends on spending patterns).
-- Use storage class with high IOPS for minimal latency.
-
-### 2.2.1 Scheduled S3 Backups (Auto-Provisioned PostgreSQL)
-
-```yaml
-spec:
-  backup:
-    enabled: true
-    schedule: "0 */6 * * *"
-    retentionCount: 14
-    s3:
-      bucket: cashu-mint-backups
-      prefix: cashumint-prod
-      region: us-east-1
-      endpoint: https://s3.amazonaws.com
-      accessKeyIdSecretRef:
-        name: cashumint-backup-credentials
-        key: AWS_ACCESS_KEY_ID
-      secretAccessKeySecretRef:
-        name: cashumint-backup-credentials
-        key: AWS_SECRET_ACCESS_KEY
-```
-
-- Backup CronJobs are currently supported for auto-provisioned PostgreSQL.
-- Ensure the backup credentials secret exists in the mint namespace.
-- A one-shot restore Job can be requested by setting annotations on the `CashuMint`:
-  - `mint.cashu.asmogo.github.io/restore-object-key=<s3-object-key>` (required)
-  - `mint.cashu.asmogo.github.io/restore-request-id=<request-id>` (optional, use a new value to create a new restore Job name)
-- Check `status.conditions[type=BackupReady]` to confirm backup/restore resource reconciliation.
-
-**Backup/Restore Runbook**
-
-1. Confirm backups are configured and the backup CronJob exists (`<mint-name>-backup`).
-2. Select the exact backup object key to restore from your S3-compatible bucket.
-3. Trigger restore by annotating the `CashuMint`:
-   ```bash
-   kubectl annotate cashumint <mint-name> -n <namespace> \
-     mint.cashu.asmogo.github.io/restore-object-key=<s3-object-key> \
-     mint.cashu.asmogo.github.io/restore-request-id=<unique-request-id> \
-     --overwrite
-   ```
-4. Watch backup Jobs (`app.kubernetes.io/component=backup`) and `BackupReady` condition updates.
-5. To request the same object restore again, change `restore-request-id` to a new value.
-
-### 2.3 External PostgreSQL
-
-Provide either connection URL or secret reference:
-
-```yaml
-spec:
-  database:
-    engine: postgres
-    postgres:
-      tlsMode: require          # disable|prefer|required
-      urlSecretRef:
-        name: cashumint-db
-        key: DATABASE_URL
-```
-
-**Secret Example**
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cashumint-db
-type: Opaque
-stringData:
-  DATABASE_URL: postgres://user:pass@host:5432/dbname?sslmode=require
-```
-
-- Supported TLS modes: `disable`, `prefer`, `require`. Defaults to `require`.
-- Mutual exclusivity: only one of `url` or `urlSecretRef`.
-- Set `maxConnections` and `connectionTimeoutSeconds` to match DB quotas.
-
-### 2.4 Orchard Companion Deployment
-
-Orchard is deployed as an optional companion container in the same pod as `cdk-mintd`.
-That gives Orchard direct access to:
-
-- the mint API over `127.0.0.1:<listenPort>`
-- the mint management RPC over `127.0.0.1:<managementRPC.port>`
-- the mint work directory for sqlite-backed mints
-
-By default, the operator uses Orchard `1.8.1` from the new `cashubtc` image namespace:
-`ghcr.io/cashubtc/orchard-mintdb-sqlite:1.8.1` or `ghcr.io/cashubtc/orchard-mintdb-postgres:1.8.1`.
-
-The operator also creates Orchard-specific Kubernetes resources:
-
-- a dedicated PVC for Orchard application state (`<mint-name>-orchard-data`)
-- a dedicated Service (`<mint-name>-orchard`)
-- an optional dedicated Ingress and optional cert-manager `Certificate`
-
-Orchard supports sqlite and PostgreSQL **mint** databases:
-
-- for sqlite mints, the operator wires Orchard to `/mnt/mint/cdk-mintd.sqlite`
-- for postgres mints, the operator reuses the same PostgreSQL URL or generated secret the mint uses
-
-Orchard itself always persists its own application state in sqlite on its own PVC.
-
-#### 2.4.1 Minimal Orchard example (sqlite mint)
-
-```yaml
-spec:
-  database:
-    engine: sqlite
-    sqlite:
-      dataDir: /data
-  managementRPC:
-    enabled: true
-  orchard:
-    enabled: true
-    setupKeySecretRef:
-      name: orchard-setup
-      key: setup-key
-    storage:
-      size: 5Gi
-    ingress:
-      enabled: true
-      host: orchard.example.com
-```
-
-#### 2.4.2 Orchard with PostgreSQL mint and secure management RPC
-
-```yaml
-spec:
-  database:
-    engine: postgres
-    postgres:
-      autoProvision: true
-  managementRPC:
-    enabled: true
-  orchard:
-    enabled: true
-    setupKeySecretRef:
-      name: orchard-setup
-      key: setup-key
-    mint:
-      rpc:
-        mTLS: true
-    ingress:
-      enabled: true
-      host: orchard.example.com
-      tls:
-        enabled: true
-        certManager:
-          enabled: true
-          issuerName: letsencrypt-prod
-```
-
-When Orchard uses mTLS to the colocated management RPC, the operator ensures a TLS secret exists. By default it uses `<cashumint-name>-management-rpc-tls`; if you set `spec.managementRPC.tlsSecretRef.name`, that name is used instead.
-
-- `ca.pem`
-- `server.pem`
-- `server.key`
-- `client.pem`
-- `client.key`
-
-The mint uses the server-side files; Orchard uses the client-side files. If the secret is absent, the operator generates it automatically.
-
-#### 2.4.3 Optional Orchard integrations
-
-You can also configure Orchard’s optional integrations via `spec.orchard`:
-
-- `bitcoin` for Bitcoin Core RPC
-- `lightning` for LND or CLN RPC
-- `taprootAssets` for `tapd`
-- `ai` for Ollama or another compatible AI endpoint
-- `extraEnv` for advanced or future Orchard environment variables
-
-Sample manifests:
-
-- `config/samples/mint_v1alpha1_cashumint_orchard_sqlite.yaml`
-- `config/samples/mint_v1alpha1_cashumint_orchard_postgres.yaml`
-
----
-
-## 3. Lightning Backend Configuration
-
-### 3.1 FakeWallet
-
-```yaml
-spec:
-  lightning:
-    backend: fakewallet
-    fakeWallet:
-      supportedUnits: ["sat"]
-      feePercent: 0.02
-      minDelayTime: 1
-      maxDelayTime: 3
-```
-
-- For testing only. Provides predictable latency and fees.
-
-### 3.2 LND
-
-```yaml
-spec:
-  lightning:
-    backend: lnd
-    lnd:
-      address: https://lnd-service.lightning:10009
-      macaroonSecretRef:
-        name: lnd-macaroon
-        key: admin.macaroon
-      certSecretRef:
-        name: lnd-cert
-        key: tls.cert
-```
-
-**Secrets**
-
-- `lnd-macaroon` Secret with base64-encoded macaroon (binary).
-- `lnd-cert` Secret with TLS PEM.
-
-Ensure the operator namespace has permissions to read these Secrets (same namespace as mint or refer via RBAC/Secret copy).
-
-### 3.3 CLN
-
-```yaml
-spec:
-  lightning:
-    backend: cln
-    cln:
-      rpcPath: /mnt/lightning/lightning-rpc
-```
-
-Mount the CLN socket via PVC/PV or hostPath. Typically implemented using Kubernetes CSI driver.
-
-### 3.4 LNBits
-
-```yaml
-spec:
-  lightning:
-    backend: lnbits
-    lnbits:
-      api: https://lnbits.example/api/v1
-      adminApiKeySecretRef:
-        name: lnbits-keys
-        key: admin
-      invoiceApiKeySecretRef:
-        name: lnbits-keys
-        key: invoice
-      retroApi: true
-```
-
-Ensure Secrets contain the API keys. TLS validation uses standard HTTP client in mintd; provide trusted CA.
-
-### 3.5 gRPC Processor
-
-```yaml
-spec:
-  paymentProcessors:
-    - name: spark-primary
-      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
-      port: 50051
-    - name: spark-secondary
-      image: ghcr.io/asmogo/cdk-spark-payment-prcoessor:v0.15.0
-      port: 50051
-  lightning:
-    backend: grpcprocessor
-    grpcProcessor:
-      processorRef: spark-primary
-      supportedUnits: ["sat"]
-      tlsSecretRef:
-        name: grpc-client-cert
-        key: client-bundle # Directory mount with client.crt/client.key/ca.crt
-```
-
-- `spec.paymentProcessors[]` lets the operator deploy multiple processor workloads per mint.
-- `grpcProcessor.processorRef` selects which managed processor is active for the mint.
-- For external processors, omit `processorRef` and set `address` + `port`.
-- TLS Secret must contain files named `client.crt`, `client.key`, `ca.crt`. Operator mounts the secret at `/secrets/grpc`.
-- Use `supportedUnits` to advertise allowed denominations.
-
-Example for the Stripe processor image (`asmogo/cdk-stripe-payment-processor:sha-7512cbe`):
-
-```yaml
-spec:
-  paymentProcessors:
-    - name: stripe-primary
-      image: asmogo/cdk-stripe-payment-processor:sha-7512cbe
-      port: 50051
-      env:
-        - name: STRIPE_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: stripe-credentials
-              key: STRIPE_API_KEY
-        - name: STRIPE_WEBHOOK_SECRET
-          valueFrom:
-            secretKeyRef:
-              name: stripe-credentials
-              key: STRIPE_WEBHOOK_SECRET
-  lightning:
-    backend: grpcprocessor
-    grpcProcessor:
-      processorRef: stripe-primary
-      supportedUnits: ["usd"]
-```
-
----
-
-## 4. Ingress and TLS
-
-### 4.1 Enable Ingress
-
-```yaml
-spec:
-  ingress:
-    enabled: true
-    className: nginx
-    host: mint.example.com
-    annotations:
-      nginx.ingress.kubernetes.io/proxy-body-size: "8m"
-```
-
-### 4.2 TLS Options
-
-1. **Manually Managed Secret**
-
-   ```yaml
-   spec:
-     ingress:
-       tls:
-         enabled: true
-         secretName: mint-example-tls
-   ```
-
-   Create TLS secret yourself (`kubectl create secret tls`).
-
-2. **cert-manager Integration**
-
-   ```yaml
-   spec:
-     ingress:
-       tls:
-         enabled: true
-         certManager:
-           enabled: true
-           issuerName: letsencrypt-prod
-           issuerKind: ClusterIssuer
-   ```
-
-   - cert-manager must be installed cluster-wide.
-   - Operator adds annotations to request certificates. TLS secret defaults to `<mint-name>-tls` unless specified.
-
-### 4.3 DNS and Network
-
-- Ensure DNS A/AAAA records point to the Ingress controller.
-- For LoadBalancer Services, request static IPs via annotations and update DNS records accordingly.
-
----
-
-## 5. Resource Management
-
-### 5.1 Compute Resources
-
-Set resource requests/limits via `spec.resources`:
-
-```yaml
-spec:
-  resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
-    limits:
-      cpu: 1
-      memory: 512Mi
-```
-
-Follow these guidelines:
-
-- Monitor CPU/memory usage (`kubectl top pods` or Prometheus) and adjust requests.
-- Keep requests ≤ limits to avoid CR admission rejection (webhook enforces requests ≤ limits).
-
-### 5.2 Storage Sizing
-
-- **PostgreSQL**: Use `storageSize` to match expected retention. Increase for large channels or high transaction volume.
-- **SQLite/redb**: Monitor PVC usage. Expand by resizing PVC (CSI must support expansion).
-- Set `storageClassName` to IOPS-optimized storage for production.
-
-### 5.3 Scaling
-
-- Mint replicas are capped at 1 (`replicas` defaults to 1, max 1). Horizontal scaling is not supported due to stateful architecture.
-- For high availability, deploy separate mints or consider failover strategies (e.g., active/passive with DNS updates).
-
----
-
-## 6. Security Best Practices
-
-### 6.1 Secret Management
-
-- Store sensitive values (mnemonics, DB URLs, API keys) in Kubernetes Secrets. Reference via `SecretKeySelector`.
-- Use external secret management (Sealed Secrets, External Secrets Operator) if possible.
-- Rotate secrets periodically. Update the referenced Secret to trigger mint rolling update.
-
-### 6.2 Network Policies
-
-Use the provided hardening assets:
-
-- `config/network-policy/allow-metrics-traffic.yaml` (via `config/network-policy/kustomization.yaml`) restricts operator metrics ingress (port 8443) to namespaces labeled `metrics=enabled`.
-- `config/network-policy/mint/allow-ingress-from-labeled-namespaces.yaml` restricts mint workload ingress to same-namespace pods and explicitly labeled ingress/API gateway namespaces.
-
-Apply the mint workload policy per namespace:
-
-```bash
-kubectl apply -n <mint-namespace> -k config/network-policy/mint
-kubectl label namespace <ingress-namespace> cashu.asmogo.github.io/allow-mint-ingress=true
-```
-
-- If you also apply `config/network-policy/allow-metrics-traffic.yaml`, label scraping namespaces:
-  ```bash
-  kubectl label namespace <monitoring-namespace> metrics=enabled
-  ```
-- This template is additive and does not restrict egress by default, avoiding accidental breakage for existing Lightning/database endpoints.
-- For stricter production isolation, add egress rules for database host, Lightning service, Bitcoin RPC nodes (LDK), and telemetry endpoints.
-
-### 6.3 RBAC
-
-- Operator runs with ClusterRole `manager-role`. Review and tighten RBAC rules if required (e.g., namespace-scoped RBAC via Kustomize overlays).
-- Avoid running mints in operator namespace; use dedicated namespace per mint for isolation.
-
-### 6.4 Pod Security
-
-- Mint pods run as non-root and drop Linux capabilities by default.
-- If LND macaroons/certs are stored as files, ensure Secrets have minimal privileges and `defaultMode` set to 0400.
-
----
-
-## 7. Operational Tips
-
-- Monitor `kubectl describe cashumint <name>` for status conditions.
-- Use `kubectl get all -l app.kubernetes.io/instance=<mint>` to inspect managed resources.
-- Set `spec.prometheus.enabled: true` to expose mint metrics and have the operator create a same-namespace `PodMonitor` automatically. This requires the Prometheus Operator `PodMonitor` CRD to be installed in the cluster.
-- When updating configuration, edit the `CashuMint` CR. Operator triggers rolling deployment if config hash changes.
-- Rollout dependency gating blocks Deployment/Service/Ingress reconciliation until required Secret references exist and auto-provisioned PostgreSQL (if enabled) is ready.
-- While blocked, `Ready=False` and `LightningReady=False` with reason `DependenciesNotReady`, and reconciliation retries every 10 seconds.
-- For zero-downtime upgrades, plan redeployments during maintenance windows in case the new configuration requires initialization.
-
----
-
-## 8. References
-
-- CRD schema: [`api/v1alpha1/cashumint_types.go`](../api/v1alpha1/cashumint_types.go)
-- Controller implementation: [`internal/controller/cashumint_controller.go`](../internal/controller/cashumint_controller.go)
-- Resource generators directory: [`internal/controller/generators`](../internal/controller/generators/deployment.go)
-- Sample manifests: [`config/samples`](../config/samples/kustomization.yaml)
-- Troubleshooting: [`docs/troubleshooting.md`](troubleshooting.md)
-- Migration steps: [`docs/migration-guide.md`](migration-guide.md)
+- spec changes regenerate the mint config and trigger a rolling Deployment update through a config hash annotation
+- optional resources such as PostgreSQL, backups, Ingress, Certificates, Orchard resources, and PodMonitors are created and updated from the same CR
+- status conditions tell you which dependency is blocking readiness
+
+## Choose your database
+
+| Database mode | When to use it | Operator-managed resources | Sample |
+| --- | --- | --- | --- |
+| SQLite | Local development and simple single-node mints | PVC | [`minimal`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_minimal.yaml) |
+| redb | Lightweight embedded storage with a PVC | PVC | [`template`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint.yaml) |
+| PostgreSQL auto-provisioned | Default production path if you want the operator to manage the database lifecycle | Secret, Service, StatefulSet | [`postgres_auto`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_postgres_auto.yaml) |
+| PostgreSQL external | Existing managed database or shared PostgreSQL cluster | none beyond mint Deployment/Service | [`external_postgres`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_external_postgres.yaml) |
+
+### Notes
+
+- Auto-provisioned PostgreSQL always uses in-cluster plaintext transport to the generated StatefulSet, so the operator forces `tlsMode=disable` for that internal URL.
+- External PostgreSQL should normally use `tlsMode: require`.
+- For embedded engines (`sqlite`, `redb`), the operator creates the PVC when `spec.storage` is present.
+
+## Choose your payment backend
+
+The operator uses `spec.paymentBackend`, not a separate top-level Lightning section.
+
+| Backend | Main fields | Best for | Sample |
+| --- | --- | --- | --- |
+| `fakeWallet` | `spec.paymentBackend.fakeWallet` | Local testing and demos | [`minimal`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_minimal.yaml) |
+| `lnd` | `spec.paymentBackend.lnd.address`, `macaroonSecretRef`, `certSecretRef` | LND-backed production mints | [`lnd`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_lnd.yaml) |
+| `cln` | `spec.paymentBackend.cln.rpcPath` | Core Lightning environments | [`cln`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_cln.yaml) |
+| `lnbits` | `spec.paymentBackend.lnbits.api`, key Secret refs | Hosted or self-managed LNBits wallets | [`lnbits`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_lnbits.yaml) |
+| `grpcProcessor` | `spec.paymentBackend.grpcProcessor` | Custom payment flows, Spark/Breez, Stripe, external processors | [payment processor guide](payment-processors.md) |
+
+### Backend caveats
+
+- **LND** secrets are mounted into the mint pod and translated to CDK paths automatically.
+- **LNBits** API keys are injected as environment variables.
+- **CLN** only passes the configured `rpcPath` through to CDK. Make sure that socket path is reachable inside the mint container through your image or surrounding platform setup.
+- **gRPC processor** can either talk to an external service or run a sidecar inside the mint pod.
+
+## Expose the mint
+
+### Service
+
+`spec.service` controls the main mint Service:
+
+- `type`: `ClusterIP`, `NodePort`, or `LoadBalancer`
+- `annotations`
+- `loadBalancerIP`
+
+The operator always reconciles a Service for the mint. Orchard gets its own Service when enabled.
+
+### Ingress and TLS
+
+Use `spec.ingress` for the mint and `spec.orchard.ingress` for Orchard.
+
+| Feature | Fields |
+| --- | --- |
+| Ingress class | `spec.ingress.className` |
+| Hostname | `spec.ingress.host` |
+| TLS secret | `spec.ingress.tls.secretName` |
+| cert-manager issuer | `spec.ingress.tls.certManager.issuerName` and `issuerKind` |
+| Extra annotations | `spec.ingress.annotations` |
+
+When cert-manager integration is enabled, the operator also reconciles a `Certificate`.
+
+## Enable Kubernetes-facing operator features
+
+| Feature | Fields | What the operator adds |
+| --- | --- | --- |
+| Auto-generated mnemonic | `spec.mintInfo.autoGenerateMnemonic` | Creates `<mint>-mnemonic` Secret once and reuses it |
+| Management RPC | `spec.managementRPC` | Configures mint management RPC; Orchard can force TLS generation for it |
+| Orchard | `spec.orchard` | Orchard container, PVC, Service, optional Ingress and Certificate |
+| Metrics | `spec.prometheus` | Exposes metrics port and reconciles a `PodMonitor` |
+| Backups | `spec.backup` | `CronJob` for `pg_dump` uploads and restore `Job` when annotated |
+| LDK sidecar | `spec.ldkNode` | Adds `ldk-node` container and LDK-related env vars |
+| HTTP cache | `spec.httpCache` | Configures CDK cache settings and optional Redis URL injection |
+| Auth | `spec.auth` | Renders NUT-21/NUT-22 auth config and optional auth DB URL |
+| DoS limits | `spec.limits` | Writes `[limits]` into the CDK config |
+| Pod placement | `nodeSelector`, `tolerations`, `affinity` | Pass-through to the pod spec |
+| Security context | `podSecurityContext`, `containerSecurityContext` | Pass-through or sensible defaults |
+
+## Orchard-specific notes
+
+Orchard is not just a flag on the mint container. When `spec.orchard.enabled=true`, the operator also:
+
+- enables management RPC if it was not already set
+- chooses a default Orchard image that matches the mint database engine
+- creates a dedicated Orchard PVC for Orchard application state
+- creates a dedicated Orchard Service and optional Ingress/Certificate
+- auto-generates a management RPC TLS Secret when Orchard needs mTLS and no Secret exists yet
+
+Use the Orchard samples when you want a complete working pattern instead of building the nested config from scratch.
+
+## Observability and rollout behavior
+
+- `spec.prometheus.enabled=true` exposes the metrics port and reconciles a `PodMonitor`
+- if the Prometheus Operator CRD is not installed, reconciliation fails with a clear error instead of silently skipping metrics
+- config changes roll the Deployment because the operator hashes the generated ConfigMap into the pod template annotations
+
+## Status conditions
+
+The most useful conditions during rollout are:
+
+| Condition | Meaning |
+| --- | --- |
+| `Ready` | Overall mint readiness |
+| `DatabaseReady` | Auto-provisioned PostgreSQL or database dependency status |
+| `PaymentBackendReady` | Payment backend dependency status |
+| `ConfigValid` | Generated config rendered and applied successfully |
+| `IngressReady` | Ingress and public endpoint status |
+| `BackupReady` | Backup CronJob or restore Job status |
+
+## Production checklist
+
+1. Use PostgreSQL, not SQLite or redb.
+2. Set a public `mintInfo.url` that matches your Ingress hostname.
+3. Store all sensitive inputs in Secrets and reference them from the CR.
+4. Enable backups when using auto-provisioned PostgreSQL.
+5. Decide whether you need management RPC, Orchard, Prometheus metrics, and authentication before exposing the mint.
+6. Size CPU, memory, and storage explicitly instead of relying on defaults.

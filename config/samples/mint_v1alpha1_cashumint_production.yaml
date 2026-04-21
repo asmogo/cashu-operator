@@ -6,11 +6,15 @@ spec:
   image: cashubtc/mintd:0.16
   mintInfo:
     url: https://cashu.example.com
-    name: "Example Cashu Mint"
-    description: "Production-grade Cashu mint with gRPC processor"
+    name: Example Cashu Mint
+    description: Production-style Cashu mint using an external gRPC processor
     mnemonicSecretRef:
       name: cashumint-production-secrets
       key: mnemonic
+    useKeysetV2: true
+    quoteTtl:
+      mintTtl: 600
+      meltTtl: 120
   database:
     engine: postgres
     postgres:
@@ -21,10 +25,10 @@ spec:
         version: "16"
         resources:
           requests:
-            cpu: 1
+            cpu: "1"
             memory: 2Gi
           limits:
-            cpu: 2
+            cpu: "2"
             memory: 4Gi
   backup:
     enabled: true
@@ -41,14 +45,23 @@ spec:
         name: cashumint-production-backup
         key: AWS_SECRET_ACCESS_KEY
   paymentBackend:
+    minMint: 100
+    maxMint: 1000000
+    minMelt: 100
+    maxMelt: 1000000
     grpcProcessor:
-      address: grpc-processor.cashu.svc.cluster.local
+      address: https://grpc-processor.cashu.svc.cluster.local
       port: 50051
       supportedUnits:
         - sat
       tlsSecretRef:
         name: grpc-client-cert
-        key: bundle
+        key: client.crt
+  managementRPC:
+    enabled: true
+  limits:
+    maxInputs: 128
+    maxOutputs: 256
   ingress:
     enabled: true
     host: cashu.example.com
@@ -67,11 +80,8 @@ spec:
       cpu: 500m
       memory: 1Gi
     limits:
-      cpu: 2
+      cpu: "2"
       memory: 2Gi
-  storage:
-    size: 20Gi
-    storageClassName: fast-ssd
   logging:
     level: info
     format: json

@@ -1,191 +1,176 @@
-# Cashu Mint Operator Troubleshooting Guide
+# Troubleshooting
 
-_Last updated: 2025-11-01_
+This guide focuses on the conditions and failure modes you are most likely to hit while reconciling a `CashuMint`.
 
-This guide lists common operational issues, diagnostic procedures, and remediation steps for the Cashu Mint Kubernetes Operator. Use it alongside `kubectl describe cashumint <name>` to review status conditions and failure messages.
-
----
-
-## 1. Common Issues
-
-### Issue: CashuMint remains in `Pending` phase
-
-**Possible causes**
-
-- CR validation errors prevented reconciliation.
-- Required secrets (mnemonic, database URL, Lightning credentials) missing.
-- Resource dependencies (Ingress class, storage class) unavailable.
-
-**Diagnostics**
-
-1. Inspect conditions:
-   ```bash
-   kubectl describe cashumint <name>
-   ```
-2. Check operator logs:
-   ```bash
-   kubectl logs -n cashu-operator-system deployment/cashu-operator-controller-manager
-   ```
-3. Verify required secrets exist in the same namespace.
-
-**Resolutions**
-
-- Fix validation errors reported in status or webhook output.
-- Create missing secrets or update `SecretKeySelector` references.
-- Ensure storage class and ingress class names match cluster resources.
-
----
-
-### Issue: `Ready=False` with reason `DependenciesNotReady`
-
-**Possible causes**
-
-- One or more referenced Secrets/keys are missing (for example DB URL, Lightning credentials, backup credentials, image pull secrets, or mnemonic).
-- Auto-provisioned PostgreSQL is not yet ready.
-
-**Diagnostics**
+## Start with status
 
 ```bash
-kubectl get cashumint <name> -n <namespace> -o jsonpath='{range .status.conditions[*]}{.type}{"="}{.status}{" reason="}{.reason}{" message="}{.message}{"\n"}{end}'
-kubectl get secret <secret-name> -n <namespace> -o yaml
-kubectl get statefulset <mint-name>-postgres -n <namespace>
+kubectl describe cashumint <name> -n <namespace>
+kubectl get cashumint <name> -n <namespace> \
+  -o jsonpath='{range .status.conditions[*]}{.type}{"="}{.status}{" reason="}{.reason}{" message="}{.message}{"\n"}{end}'
 ```
 
-**Resolutions**
+The operator's main condition types are:
 
-- Create missing Secrets and required keys exactly as referenced in the `CashuMint` spec.
-- If PostgreSQL is auto-provisioned, wait for StatefulSet readiness and PVC binding.
-- Reconcile resumes automatically (10s retry interval) once dependencies are ready.
+- `Ready`
+- `DatabaseReady`
+- `PaymentBackendReady`
+- `ConfigValid`
+- `IngressReady`
+- `BackupReady`
 
----
+## Common issues
 
-### Issue: PostgreSQL auto-provisioning fails
+### `Ready=False` and `ConfigValid=False`
 
-**Possible causes**
+Usually means the operator could not render or apply the generated config.
 
-- Storage class not found or PVC stuck in `Pending`.
-- StatefulSet fails readiness probes.
-- Generated secret missing (operator lacked permissions).
-
-**Diagnostics**
+Check:
 
 ```bash
-kubectl get pvc -l app.kubernetes.io/component=database -n <namespace>
+kubectl logs -n cashu-operator-system deployment/cashu-operator-controller-manager
+kubectl get configmap <mint-name>-config -n <namespace> -o yaml
+```
+
+Typical causes:
+
+- invalid field combination in the CR
+- missing PostgreSQL Secret for an external DB
+- invalid backup configuration on a non-auto-provisioned PostgreSQL mint
+
+### `DatabaseReady=False`
+
+If you use auto-provisioned PostgreSQL:
+
+```bash
+kubectl get statefulset,pvc,secret -n <namespace> | grep <mint-name>-postgres
 kubectl describe statefulset <mint-name>-postgres -n <namespace>
-kubectl logs statefulset/<mint-name>-postgres -c postgres -n <namespace>
+kubectl logs statefulset/<mint-name>-postgres -n <namespace>
 ```
 
-**Resolutions**
+Typical causes:
 
-- Confirm `spec.database.postgres.autoProvisionSpec.storageClassName` exists.
-- Increase storage size or adjust resource requests in `autoProvisionSpec`.
-- Ensure operator has RBAC to manage Secrets and StatefulSets.
+- storage class does not exist
+- PVC is stuck in `Pending`
+- PostgreSQL container resources are too small
 
----
+If you use external PostgreSQL, re-check `spec.database.postgres.urlSecretRef`, `tlsMode`, and the target URL.
 
-### Issue: Deployment not rolling out after config change
+### `PaymentBackendReady=False`
 
-**Possible causes**
+This condition usually points to missing dependency material rather than a broken Deployment.
 
-- ConfigMap hash unchanged (no spec change detected).
-- Rolling update blocked by readiness/liveness probe failure.
-- Image pull failure or crash loops.
+Backend-specific checks:
 
-**Diagnostics**
+| Backend | What to verify |
+| --- | --- |
+| `lnd` | macaroon Secret, cert Secret, reachable `address` |
+| `lnbits` | admin and invoice API key Secrets, API URL |
+| `cln` | socket path exists inside the container |
+| `grpcProcessor` | address, port, TLS Secret, or sidecar image |
+
+### gRPC processor errors
+
+Common mistakes:
+
+1. `address` is missing when not using a sidecar.
+2. Sidecar is enabled but `sidecarProcessor.image` is missing.
+3. The processor should use TLS but `address` still starts with `http://`.
+4. `tlsSecretRef` points to the wrong Secret name.
+
+Inspect the rendered config and pod:
 
 ```bash
-kubectl get deployment <mint-name> -n <namespace>
-kubectl describe deployment <mint-name> -n <namespace>
+kubectl get configmap <mint-name>-config -n <namespace> -o jsonpath='{.data.config\.toml}'
+kubectl describe pod -n <namespace> -l app.kubernetes.io/instance=<mint-name>
 kubectl logs deployment/<mint-name> -c mintd -n <namespace>
+kubectl logs deployment/<mint-name> -c grpc-processor -n <namespace>
 ```
 
-**Resolutions**
+### Ingress not becoming ready
 
-- Confirm spec change updates config hash: reconcile by editing `CashuMint` (`kubectl annotate --overwrite` to force change).
-- Check readiness and liveness endpoints (`/v1/info`, `/health`) for errors.
-- Ensure container image exists and credentials for private registries are configured via `spec.imagePullSecrets`.
-
----
-
-### Issue: Ingress not working
-
-**Possible causes**
-
-- Ingress resource not created (`spec.ingress.enabled=false` by mistake).
-- cert-manager missing or issuer misconfigured.
-- DNS records not updated or pointing to wrong LB IP.
-
-**Diagnostics**
+Check:
 
 ```bash
 kubectl get ingress <mint-name> -n <namespace>
 kubectl describe ingress <mint-name> -n <namespace>
 ```
 
-If TLS enabled via cert-manager:
+If cert-manager is enabled:
+
 ```bash
 kubectl describe certificate <mint-name> -n <namespace>
 kubectl logs -n cert-manager deployment/cert-manager
 ```
 
-**Resolutions**
+Typical causes:
 
-- Set `spec.ingress.enabled=true` and provide `spec.ingress.host`.
-- Verify `spec.ingress.tls.certManager.issuerName` and `issuerKind` exist.
-- Update DNS to the ingress controller’s external IP.
-- If using manual TLS secret, ensure it’s populated with valid cert/key.
+- `spec.ingress.host` missing
+- issuer name or kind is wrong
+- DNS is not pointed at the ingress controller
 
----
+### Metrics enabled but reconciliation fails
 
-## 2. Debugging Commands
+When `spec.prometheus.enabled=true`, the operator reconciles a `PodMonitor`. If the Prometheus Operator CRD is not installed, reconciliation fails instead of silently skipping it.
+
+Check:
 
 ```bash
-# Check CashuMint status and conditions
-kubectl get cashumint
-kubectl describe cashumint <name>
+kubectl api-resources | grep podmonitors
+```
 
-# List generated resources
-kubectl get all -l app.kubernetes.io/instance=<mint-name>
+### Backups not reconciling
+
+Backups only work when:
+
+- `spec.database.engine=postgres`
+- `spec.database.postgres.autoProvision=true`
+- `spec.backup.s3` is fully specified
+
+Check:
+
+```bash
+kubectl get cronjob,job -n <namespace> | grep <mint-name>
+kubectl describe cronjob <mint-name>-backup -n <namespace>
+```
+
+To request a restore:
+
+```bash
+kubectl annotate cashumint <mint-name> -n <namespace> \
+  mint.cashu.asmogo.github.io/restore-object-key=<object-key> \
+  mint.cashu.asmogo.github.io/restore-request-id=<request-id> \
+  --overwrite
+```
+
+### Orchard problems
+
+Orchard adds more moving parts than a plain mint:
+
+- Orchard setup key Secret must exist
+- Orchard may depend on management RPC and management RPC TLS
+- Orchard has its own Service, Ingress, and PVC
+
+Check:
+
+```bash
+kubectl get all,pvc,ingress,secret -n <namespace> | grep <mint-name>-orchard
+kubectl logs deployment/<mint-name> -c orchard -n <namespace>
+```
+
+## Quick resource inventory
+
+These commands are useful for almost every debugging session:
+
+```bash
+# Custom resource and generated resources
+kubectl get cashumint <name> -n <namespace> -o yaml
+kubectl get all,pvc,configmap,secret,ingress,certificate,cronjob,job,podmonitor \
+  -n <namespace> -l app.kubernetes.io/instance=<name>
+
+# Mint logs
+kubectl logs deployment/<name> -c mintd -n <namespace>
 
 # Operator logs
 kubectl logs -n cashu-operator-system deployment/cashu-operator-controller-manager
-
-# Mint application logs
-kubectl logs deployment/<mint-name> -c mintd -n <namespace>
-
-# PostgreSQL logs (auto-provisioned)
-kubectl logs statefulset/<mint-name>-postgres -n <namespace>
-
-# Inspect ConfigMap
-kubectl get configmap <mint-name>-config -o yaml -n <namespace>
 ```
-
----
-
-## 3. Status Conditions
-
-`CashuMint` status surfaces the following conditions:
-
-| Condition         | Meaning                                                     | Typical Remediation                                        |
-|-------------------|-------------------------------------------------------------|-------------------------------------------------------------|
-| `Ready`           | Overall availability. `True` when all components ready.     | Review component-specific conditions if `False`.            |
-| `DatabaseReady`   | Database dependency gate status (auto-provisioned DB readiness or DB config reconciliation for external DB). | Check PostgreSQL StatefulSet/PVC readiness or DB secret/url references. |
-| `LightningReady`  | Lightning dependency gate status after required secrets/dependencies are present. | Validate backend config and referenced secret keys.         |
-| `ConfigValid`     | Operator validated spec and generated config successfully.  | Fix spec fields referenced in validation error message.     |
-| `IngressReady`    | Ingress resource available and (if TLS) certificates active.| Check ingress status, DNS, cert-manager logs.               |
-| `BackupReady`     | Backup CronJob (and optional restore Job trigger) reconciled. | Check backup config scope (`postgres` + `autoProvision=true`), CronJob/Job events, and annotations. |
-
-Use `kubectl get cashumint <name> -o jsonpath='{.status.conditions}'` to get raw condition payloads for automation.
-
----
-
-## 4. Getting Help
-
-- **Report issues**: open GitHub issues at [asmogo/cashu-operator](https://github.com/asmogo/cashu-operator/issues).
-- **Logs and diagnostics**: provide operator logs, `kubectl describe cashumint <name>`, and relevant YAML snippets when filing bugs.
-- **Community**: join the Cashu community channels (Matrix, Nostr, etc.) for operational discussions and support.
-
-When seeking assistance, include:
-1. Operator version (`kubectl -n cashu-operator-system get deployment cashu-operator-controller-manager -o jsonpath='{.spec.template.spec.containers[0].image}'`)
-2. Kubernetes version (`kubectl version --short`)
-3. Sanitized `CashuMint` spec (remove secrets) and relevant events (`kubectl get events -n <namespace>`).

@@ -1,0 +1,43 @@
+# CashuMint that connects to an external gRPC payment processor over TLS.
+# The Secret should contain client.crt, client.key, and ca.crt.
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-grpc-external
+spec:
+  mintInfo:
+    url: https://grpc-external-mint.example.com
+    autoGenerateMnemonic: true
+    name: External gRPC Processor Mint
+    description: Cashu mint using an externally managed gRPC payment processor
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 20Gi
+        version: "16"
+  paymentBackend:
+    minMint: 100
+    maxMint: 1000000
+    minMelt: 100
+    maxMelt: 1000000
+    grpcProcessor:
+      address: https://payments.cashu.svc.cluster.local
+      port: 50051
+      supportedUnits:
+        - sat
+      tlsSecretRef:
+        name: grpc-processor-client
+        key: client.crt
+  ingress:
+    enabled: true
+    host: grpc-external-mint.example.com
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt-prod
+        issuerKind: ClusterIssuer
+  service:
+    type: ClusterIP
