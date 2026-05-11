@@ -118,6 +118,27 @@ func TestWritePaymentBackendSection_CoversOptionalFields(t *testing.T) {
 		assertContains(t, config, "reserve_fee_min = 6")
 	})
 
+	t.Run("grpc processor", func(t *testing.T) {
+		mint := baseMint("grpc-rich")
+		mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{
+			GRPCProcessor: &mintv1alpha1.GRPCProcessorConfig{
+				Address:        "processor.default.svc.cluster.local",
+				Port:           10051,
+				SupportedUnits: []string{"sat", "usd"},
+				TLSSecretRef:   &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "grpc-secret"}, Key: "client.crt"},
+			},
+		}
+
+		var buf bytes.Buffer
+		writePaymentBackendSection(&buf, mint)
+		config := buf.String()
+		assertContains(t, config, `ln_backend = "grpcprocessor"`)
+		assertContains(t, config, `addr = "http://processor.default.svc.cluster.local"`)
+		assertContains(t, config, "port = 10051")
+		assertContains(t, config, `supported_units = ["sat", "usd"]`)
+		assertContains(t, config, `tls_dir = "/secrets/grpc"`)
+	})
+
 	t.Run("fake wallet", func(t *testing.T) {
 		mint := baseMint("fake-wallet-rich")
 		feePercent := 0.07

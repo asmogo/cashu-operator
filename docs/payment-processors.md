@@ -10,6 +10,7 @@ When `spec.paymentBackend.grpcProcessor` is set, the operator:
 
 - sets CDK's Lightning backend to `grpcprocessor`
 - renders the `[grpc_processor]` section in the generated `config.toml`
+- injects `CDK_MINTD_GRPC_PAYMENT_PROCESSOR_*` env vars for the processor endpoint, port, supported units, and TLS directory when configured
 - mounts client TLS materials when `tlsSecretRef` is provided
 - optionally injects a sidecar container named `grpc-processor` into the mint pod
 
@@ -43,6 +44,7 @@ spec:
   - `ca.crt`
 
 The `key` field is still required because the CRD uses `SecretKeySelector`, but the operator mounts the entire Secret by name.
+The mounted directory is passed to mintd as `CDK_MINTD_GRPC_PAYMENT_PROCESSOR_TLS_DIR=/secrets/grpc`.
 
 See the full example: [`mint_v1alpha1_cashumint_grpc_processor_external.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_grpc_processor_external.yaml)
 

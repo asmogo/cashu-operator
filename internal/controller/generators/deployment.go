@@ -18,6 +18,7 @@ package generators
 
 import (
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -466,10 +467,20 @@ func mintManagementRPCEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	return vars
 }
 
-// mintPaymentBackendEnvVars injects secret-backed credentials for LNBits.
+// mintPaymentBackendEnvVars injects backend-specific env vars for mintd.
 func mintPaymentBackendEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
-	if mint.Spec.PaymentBackend.ActiveBackend() != mintv1alpha1.PaymentBackendLNBits ||
-		mint.Spec.PaymentBackend.LNBits == nil {
+	switch mint.Spec.PaymentBackend.ActiveBackend() {
+	case mintv1alpha1.PaymentBackendLNBits:
+		return mintLNBitsEnvVars(mint)
+	case mintv1alpha1.PaymentBackendGRPCProcessor:
+		return mintGRPCProcessorEnvVars(mint)
+	default:
+		return nil
+	}
+}
+
+func mintLNBitsEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mint.Spec.PaymentBackend.LNBits == nil {
 		return nil
 	}
 	return []corev1.EnvVar{
@@ -482,6 +493,35 @@ func mintPaymentBackendEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &mint.Spec.PaymentBackend.LNBits.InvoiceAPIKeySecretRef},
 		},
 	}
+}
+
+func mintGRPCProcessorEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	gp := mint.Spec.PaymentBackend.GRPCProcessor
+	if gp == nil {
+		return nil
+	}
+
+	vars := []corev1.EnvVar{
+		{
+			Name:  "CDK_MINTD_GRPC_PAYMENT_PROCESSOR_SUPPORTED_UNITS",
+			Value: strings.Join(grpcProcessorSupportedUnits(gp), ","),
+		},
+		{
+			Name:  "CDK_MINTD_GRPC_PAYMENT_PROCESSOR_ADDRESS",
+			Value: grpcProcessorAddress(gp),
+		},
+		{
+			Name:  "CDK_MINTD_GRPC_PAYMENT_PROCESSOR_PORT",
+			Value: fmt.Sprintf("%d", grpcProcessorPort(gp)),
+		},
+	}
+	if gp.TLSSecretRef != nil {
+		vars = append(vars, corev1.EnvVar{
+			Name:  "CDK_MINTD_GRPC_PAYMENT_PROCESSOR_TLS_DIR",
+			Value: grpcProcessorTLSMountPath,
+		})
+	}
+	return vars
 }
 
 // mintLDKEnvVars injects Bitcoin RPC credentials and the LDK node mnemonic.
@@ -578,7 +618,7 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 		mint.Spec.PaymentBackend.GRPCProcessor.TLSSecretRef != nil {
 		mounts = append(mounts, corev1.VolumeMount{
 			Name:      "grpc-tls",
-			MountPath: "/secrets/grpc",
+			MountPath: grpcProcessorTLSMountPath,
 			ReadOnly:  true,
 		})
 	}

@@ -76,6 +76,62 @@ func TestGenerateEnvironmentVariables_UsesRedisSecretWhenProvided(t *testing.T) 
 	assertEnvSecretRef(t, envVars, "REDIS_CONNECTION_STRING", "redis-secret", "url")
 }
 
+func TestGenerateEnvironmentVariables_GRPCProcessorEnvVars(t *testing.T) {
+	mint := baseMint("grpc-env")
+	mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{
+		GRPCProcessor: &mintv1alpha1.GRPCProcessorConfig{
+			Address:        "processor.default.svc.cluster.local",
+			Port:           10051,
+			SupportedUnits: []string{"sat", "usd"},
+			TLSSecretRef:   &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "grpc-secret"}, Key: "client.crt"},
+		},
+	}
+
+	envVars := generateEnvironmentVariables(mint)
+	values := envVarMap(envVars)
+
+	if values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_SUPPORTED_UNITS"] != "sat,usd" {
+		t.Fatalf("supported units env = %q, want sat,usd", values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_SUPPORTED_UNITS"])
+	}
+	if values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_ADDRESS"] != "http://processor.default.svc.cluster.local" {
+		t.Fatalf("address env = %q, want normalized processor address", values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_ADDRESS"])
+	}
+	if values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_PORT"] != "10051" {
+		t.Fatalf("port env = %q, want 10051", values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_PORT"])
+	}
+	if values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_TLS_DIR"] != grpcProcessorTLSMountPath {
+		t.Fatalf("tls dir env = %q, want %q", values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_TLS_DIR"], grpcProcessorTLSMountPath)
+	}
+}
+
+func TestGenerateEnvironmentVariables_GRPCProcessorDefaults(t *testing.T) {
+	mint := baseMint("grpc-env-defaults")
+	mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{
+		GRPCProcessor: &mintv1alpha1.GRPCProcessorConfig{
+			SidecarProcessor: &mintv1alpha1.SidecarProcessorConfig{
+				Enabled: true,
+				Image:   "processor:latest",
+			},
+		},
+	}
+
+	envVars := generateEnvironmentVariables(mint)
+	values := envVarMap(envVars)
+
+	if values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_SUPPORTED_UNITS"] != "sat" {
+		t.Fatalf("supported units env = %q, want sat", values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_SUPPORTED_UNITS"])
+	}
+	if values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_ADDRESS"] != "http://127.0.0.1" {
+		t.Fatalf("address env = %q, want loopback default", values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_ADDRESS"])
+	}
+	if values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_PORT"] != "50051" {
+		t.Fatalf("port env = %q, want 50051", values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_PORT"])
+	}
+	if _, ok := values["CDK_MINTD_GRPC_PAYMENT_PROCESSOR_TLS_DIR"]; ok {
+		t.Fatalf("TLS dir env should be omitted without tlsSecretRef")
+	}
+}
+
 func TestGenerateVolumeMounts_CoversBackendSecrets(t *testing.T) {
 	t.Run(lndStr, func(t *testing.T) {
 		mint := baseMint("lnd-mounts")
