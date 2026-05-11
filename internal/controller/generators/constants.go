@@ -17,9 +17,10 @@ limitations under the License.
 package generators
 
 const (
-	trueStr    = "true"
-	orchardStr = "orchard"
-	lndStr     = "lnd"
-	tapdStr    = "tapd"
-	fastSSD    = "fast-ssd"
+	trueStr                   = "true"
+	orchardStr                = "orchard"
+	lndStr                    = "lnd"
+	tapdStr                   = "tapd"
+	fastSSD                   = "fast-ssd"
+	grpcProcessorTLSMountPath = "/secrets/grpc"
 )
