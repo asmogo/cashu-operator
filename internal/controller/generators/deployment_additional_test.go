@@ -76,6 +76,27 @@ func TestGenerateEnvironmentVariables_UsesRedisSecretWhenProvided(t *testing.T) 
 	assertEnvSecretRef(t, envVars, "REDIS_CONNECTION_STRING", "redis-secret", "url")
 }
 
+func TestGenerateEnvironmentVariables_PrometheusEnabled(t *testing.T) {
+	mint := baseMint("prometheus-env")
+
+	values := envVarMap(generateEnvironmentVariables(mint))
+	if _, ok := values["CDK_MINTD_PROMETHEUS_ENABLED"]; ok {
+		t.Fatal("CDK_MINTD_PROMETHEUS_ENABLED should be omitted when Prometheus is not configured")
+	}
+
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: false}
+	values = envVarMap(generateEnvironmentVariables(mint))
+	if _, ok := values["CDK_MINTD_PROMETHEUS_ENABLED"]; ok {
+		t.Fatal("CDK_MINTD_PROMETHEUS_ENABLED should be omitted when Prometheus is disabled")
+	}
+
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+	values = envVarMap(generateEnvironmentVariables(mint))
+	if values["CDK_MINTD_PROMETHEUS_ENABLED"] != trueStr {
+		t.Fatalf("CDK_MINTD_PROMETHEUS_ENABLED = %q, want %q", values["CDK_MINTD_PROMETHEUS_ENABLED"], trueStr)
+	}
+}
+
 func TestGenerateEnvironmentVariables_GRPCProcessorEnvVars(t *testing.T) {
 	mint := baseMint("grpc-env")
 	mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{
