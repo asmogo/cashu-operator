@@ -371,32 +371,42 @@ func writeGRPCProcessorSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) 
 	gp := mint.Spec.PaymentBackend.GRPCProcessor
 	buf.WriteString("\n[grpc_processor]\n")
 
-	// addr is passed to tonic Channel::from_shared("{addr}:{port}") which requires a URI scheme.
-	addr := gp.Address
-	sidecarEnabled := gp.SidecarProcessor != nil && gp.SidecarProcessor.Enabled
-	if sidecarEnabled || addr == "" {
+	fmt.Fprintf(buf, "addr = %q\n", grpcProcessorAddress(gp))
+	fmt.Fprintf(buf, "port = %d\n", grpcProcessorPort(gp))
+	fmt.Fprintf(buf, "supported_units = [\"%s\"]\n", strings.Join(grpcProcessorSupportedUnits(gp), `", "`))
+
+	if gp.TLSSecretRef != nil {
+		fmt.Fprintf(buf, "tls_dir = %q\n", grpcProcessorTLSMountPath)
+	}
+}
+
+func grpcProcessorAddress(gp *mintv1alpha1.GRPCProcessorConfig) string {
+	addr := ""
+	if gp != nil {
+		addr = gp.Address
+	}
+	if addr == "" {
 		addr = "http://127.0.0.1"
 	}
+	// addr is passed to tonic Channel::from_shared("{addr}:{port}") which requires a URI scheme.
 	if !strings.HasPrefix(addr, "http://") && !strings.HasPrefix(addr, "https://") {
 		addr = "http://" + addr
 	}
-	fmt.Fprintf(buf, "addr = %q\n", addr)
+	return addr
+}
 
-	port := gp.Port
-	if port == 0 {
-		port = 50051
+func grpcProcessorPort(gp *mintv1alpha1.GRPCProcessorConfig) int32 {
+	if gp == nil || gp.Port == 0 {
+		return 50051
 	}
-	fmt.Fprintf(buf, "port = %d\n", port)
+	return gp.Port
+}
 
-	supportedUnits := []string{"sat"}
-	if len(gp.SupportedUnits) > 0 {
-		supportedUnits = gp.SupportedUnits
+func grpcProcessorSupportedUnits(gp *mintv1alpha1.GRPCProcessorConfig) []string {
+	if gp == nil || len(gp.SupportedUnits) == 0 {
+		return []string{"sat"}
 	}
-	fmt.Fprintf(buf, "supported_units = [\"%s\"]\n", strings.Join(supportedUnits, `", "`))
-
-	if gp.TLSSecretRef != nil {
-		buf.WriteString("tls_dir = \"/secrets/grpc-tls\"\n")
-	}
+	return gp.SupportedUnits
 }
 
 func writeLDKNodeSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
