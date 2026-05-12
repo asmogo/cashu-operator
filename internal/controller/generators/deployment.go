@@ -323,6 +323,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	envVars = append(envVars, mintMnemonicEnvVars(mint)...)
 	envVars = append(envVars, mintDatabaseEnvVars(mint)...)
 	envVars = append(envVars, mintManagementRPCEnvVars(mint)...)
+	envVars = append(envVars, mintPrometheusEnvVars(mint)...)
 	envVars = append(envVars, mintPaymentBackendEnvVars(mint)...)
 	envVars = append(envVars, mintLDKEnvVars(mint)...)
 	envVars = append(envVars, mintHTTPCacheEnvVars(mint)...)
@@ -464,6 +465,13 @@ func mintManagementRPCEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 		})
 	}
 	return vars
+}
+
+func mintPrometheusEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mint.Spec.Prometheus == nil || !mint.Spec.Prometheus.Enabled {
+		return nil
+	}
+	return []corev1.EnvVar{{Name: "CDK_MINTD_PROMETHEUS_ENABLED", Value: trueStr}}
 }
 
 // mintPaymentBackendEnvVars injects secret-backed credentials for LNBits.
