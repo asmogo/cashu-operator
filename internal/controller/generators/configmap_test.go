@@ -249,11 +249,18 @@ func TestGenerateConfigMap_Limits(t *testing.T) {
 func TestGenerateConfigMap_Prometheus(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("prom-mint")
-	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true, Address: "0.0.0.0", Port: int32Ptr(9090)}
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
 
 	cm, _ := GenerateConfigMap(mint, scheme, "")
 	assertContains(t, cm.Data["config.toml"], "[prometheus]")
+	assertContains(t, cm.Data["config.toml"], `address = "0.0.0.0"`)
 	assertContains(t, cm.Data["config.toml"], "port = 9090")
+
+	mint.Spec.Prometheus.Address = "127.0.0.1"
+	mint.Spec.Prometheus.Port = int32Ptr(9191)
+	cm, _ = GenerateConfigMap(mint, scheme, "")
+	assertContains(t, cm.Data["config.toml"], `address = "127.0.0.1"`)
+	assertContains(t, cm.Data["config.toml"], "port = 9191")
 }
 
 func TestGenerateConfigMap_LDKNode(t *testing.T) {

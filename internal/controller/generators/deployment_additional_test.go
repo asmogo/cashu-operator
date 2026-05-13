@@ -49,13 +49,9 @@ func TestGenerateEnvironmentVariables_CoversDirectAndSecretSources(t *testing.T)
 	envVars := generateEnvironmentVariables(mint)
 	values := envVarMap(envVars)
 
-	if values["CDK_MINTD_POSTGRES_URL"] != "postgresql://user:pass@db:5432/cashu" {
-		t.Fatalf("CDK_MINTD_POSTGRES_URL = %q, want direct postgres URL", values["CDK_MINTD_POSTGRES_URL"])
-	}
 	if values["REDIS_CONNECTION_STRING"] != "redis://cache:6379/0" {
 		t.Fatalf("REDIS_CONNECTION_STRING = %q, want direct redis URL", values["REDIS_CONNECTION_STRING"])
 	}
-	assertEnvSecretRef(t, envVars, "CDK_MINTD_AUTH_POSTGRES_URL", "auth-db", "url")
 	assertEnvSecretRef(t, envVars, "LNBITS_ADMIN_API_KEY", "lnbits", "admin")
 	assertEnvSecretRef(t, envVars, "LNBITS_INVOICE_API_KEY", "lnbits", "invoice")
 	assertEnvSecretRef(t, envVars, "BITCOIN_RPC_USER", "bitcoin-rpc", "user")

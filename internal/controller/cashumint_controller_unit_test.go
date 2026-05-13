@@ -192,6 +192,34 @@ func TestUpdateStatus(t *testing.T) {
 func TestReconcileConfigMapRequiresReadyPostgresSecret(t *testing.T) {
 	ctx := context.Background()
 
+	t.Run("renders auto-provisioned database URL when the password is ready", func(t *testing.T) {
+		mint := unitTestCashuMint("ready-secret")
+		mint.Spec.Database = mintv1alpha1.DatabaseConfig{
+			Engine: mintv1alpha1.DatabaseEnginePostgres,
+			Postgres: &mintv1alpha1.PostgresConfig{
+				AutoProvision: true,
+			},
+		}
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "ready-secret-postgres-secret", Namespace: mint.Namespace},
+			Data:       map[string][]byte{"password": []byte("secret-password")},
+		}
+
+		reconciler, client := newUnitTestReconciler(t, mint, secret)
+		if err := reconciler.reconcileConfigMap(ctx, mint); err != nil {
+			t.Fatalf("reconcileConfigMap() error = %v", err)
+		}
+
+		configMap := &corev1.ConfigMap{}
+		if err := client.Get(ctx, ctrlclient.ObjectKey{Name: "ready-secret-config", Namespace: mint.Namespace}, configMap); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		config := configMap.Data["config.toml"]
+		if !strings.Contains(config, `url = "postgresql://cdk:secret-password@ready-secret-postgres:5432/cdk_mintd?sslmode=disable"`) {
+			t.Fatalf("config.toml did not contain resolved auto-provisioned URL:\n%s", config)
+		}
+	})
+
 	t.Run("returns a not-ready error when the secret is missing", func(t *testing.T) {
 		mint := unitTestCashuMint("missing-secret")
 		mint.Spec.Database = mintv1alpha1.DatabaseConfig{
@@ -225,6 +253,177 @@ func TestReconcileConfigMapRequiresReadyPostgresSecret(t *testing.T) {
 		err := reconciler.reconcileConfigMap(ctx, mint)
 		if err == nil || !strings.Contains(err.Error(), "password key is empty") {
 			t.Fatalf("reconcileConfigMap() error = %v", err)
+		}
+	})
+
+	t.Run("renders external database URLs from Secret refs", func(t *testing.T) {
+		mint := unitTestCashuMint("external-secret")
+		mint.Spec.Database = mintv1alpha1.DatabaseConfig{
+			Engine: mintv1alpha1.DatabaseEnginePostgres,
+			Postgres: &mintv1alpha1.PostgresConfig{
+				URLSecretRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: "mint-db"},
+					Key:                  "url",
+				},
+			},
+		}
+		mint.Spec.Auth = &mintv1alpha1.AuthConfig{
+			Enabled: true,
+			Database: &mintv1alpha1.AuthDatabaseConfig{
+				Postgres: &mintv1alpha1.PostgresConfig{
+					URLSecretRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "auth-db"},
+						Key:                  "url",
+					},
+				},
+			},
+		}
+		mintDBSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "mint-db", Namespace: mint.Namespace},
+			Data:       map[string][]byte{"url": []byte("postgresql://mint:secret@db:5432/mint")},
+		}
+		authDBSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "auth-db", Namespace: mint.Namespace},
+			Data:       map[string][]byte{"url": []byte("postgresql://auth:secret@db:5432/auth")},
+		}
+
+		reconciler, client := newUnitTestReconciler(t, mint, mintDBSecret, authDBSecret)
+		if err := reconciler.reconcileConfigMap(ctx, mint); err != nil {
+			t.Fatalf("reconcileConfigMap() error = %v", err)
+		}
+
+		configMap := &corev1.ConfigMap{}
+		if err := client.Get(ctx, ctrlclient.ObjectKey{Name: "external-secret-config", Namespace: mint.Namespace}, configMap); err != nil {
+			t.Fatalf("Get() error = %v", err)
+		}
+		config := configMap.Data["config.toml"]
+		for _, want := range []string{
+			`url = "postgresql://mint:secret@db:5432/mint"`,
+			`url = "postgresql://auth:secret@db:5432/auth"`,
+		} {
+			if !strings.Contains(config, want) {
+				t.Fatalf("config.toml missing %q:\n%s", want, config)
+			}
+		}
+		if mint.Spec.Database.Postgres.URL != "" || mint.Spec.Database.Postgres.URLSecretRef == nil {
+			t.Fatal("reconcileConfigMap should not mutate the original mint database spec")
+		}
+		if mint.Spec.Auth.Database.Postgres.URL != "" || mint.Spec.Auth.Database.Postgres.URLSecretRef == nil {
+			t.Fatal("reconcileConfigMap should not mutate the original auth database spec")
+		}
+	})
+
+	t.Run("returns an error when the auth database Secret is missing", func(t *testing.T) {
+		mint := unitTestCashuMint("missing-auth-secret")
+		mint.Spec.Auth = &mintv1alpha1.AuthConfig{
+			Enabled: true,
+			Database: &mintv1alpha1.AuthDatabaseConfig{
+				Postgres: &mintv1alpha1.PostgresConfig{
+					URLSecretRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "missing-auth-db"},
+						Key:                  "url",
+					},
+				},
+			},
+		}
+
+		reconciler, _ := newUnitTestReconciler(t, mint)
+		err := reconciler.reconcileConfigMap(ctx, mint)
+		if err == nil || !strings.Contains(err.Error(), "spec.auth.database.postgres.urlSecretRef secret missing-auth-db not ready yet") {
+			t.Fatalf("reconcileConfigMap() error = %v", err)
+		}
+	})
+
+	t.Run("wraps config map generation errors", func(t *testing.T) {
+		mint := unitTestCashuMint("bad-scheme")
+		reconciler, _ := newUnitTestReconciler(t, mint)
+		reconciler.Scheme = runtime.NewScheme()
+
+		err := reconciler.reconcileConfigMap(ctx, mint)
+		if err == nil || !strings.Contains(err.Error(), "failed to generate ConfigMap") {
+			t.Fatalf("reconcileConfigMap() error = %v", err)
+		}
+	})
+}
+
+func TestResolveRequiredSecretValue(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("nil ref returns empty value", func(t *testing.T) {
+		reconciler, _ := newUnitTestReconciler(t)
+		value, err := reconciler.resolveRequiredSecretValue(ctx, "default", nil, "spec.test.ref")
+		if err != nil {
+			t.Fatalf("resolveRequiredSecretValue() error = %v", err)
+		}
+		if value != "" {
+			t.Fatalf("value = %q, want empty", value)
+		}
+	})
+
+	t.Run("requires name and key", func(t *testing.T) {
+		reconciler, _ := newUnitTestReconciler(t)
+		_, err := reconciler.resolveRequiredSecretValue(ctx, "default", &corev1.SecretKeySelector{}, "spec.test.ref")
+		if err == nil || !strings.Contains(err.Error(), "must specify both secret name and key") {
+			t.Fatalf("resolveRequiredSecretValue() error = %v", err)
+		}
+	})
+
+	t.Run("reports missing secret", func(t *testing.T) {
+		reconciler, _ := newUnitTestReconciler(t)
+		_, err := reconciler.resolveRequiredSecretValue(ctx, "default", &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "missing"},
+			Key:                  "url",
+		}, "spec.test.ref")
+		if err == nil || !strings.Contains(err.Error(), "secret missing not ready yet") {
+			t.Fatalf("resolveRequiredSecretValue() error = %v", err)
+		}
+	})
+
+	t.Run("reports missing key", func(t *testing.T) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "default"},
+			Data:       map[string][]byte{"other": []byte("postgresql://db")},
+		}
+		reconciler, _ := newUnitTestReconciler(t, secret)
+		_, err := reconciler.resolveRequiredSecretValue(ctx, "default", &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "db"},
+			Key:                  "url",
+		}, "spec.test.ref")
+		if err == nil || !strings.Contains(err.Error(), "missing or empty") {
+			t.Fatalf("resolveRequiredSecretValue() error = %v", err)
+		}
+	})
+
+	t.Run("reports empty key", func(t *testing.T) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "default"},
+			Data:       map[string][]byte{"url": {}},
+		}
+		reconciler, _ := newUnitTestReconciler(t, secret)
+		_, err := reconciler.resolveRequiredSecretValue(ctx, "default", &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "db"},
+			Key:                  "url",
+		}, "spec.test.ref")
+		if err == nil || !strings.Contains(err.Error(), "missing or empty") {
+			t.Fatalf("resolveRequiredSecretValue() error = %v", err)
+		}
+	})
+
+	t.Run("returns secret value", func(t *testing.T) {
+		secret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "default"},
+			Data:       map[string][]byte{"url": []byte("postgresql://db")},
+		}
+		reconciler, _ := newUnitTestReconciler(t, secret)
+		value, err := reconciler.resolveRequiredSecretValue(ctx, "default", &corev1.SecretKeySelector{
+			LocalObjectReference: corev1.LocalObjectReference{Name: "db"},
+			Key:                  "url",
+		}, "spec.test.ref")
+		if err != nil {
+			t.Fatalf("resolveRequiredSecretValue() error = %v", err)
+		}
+		if value != "postgresql://db" {
+			t.Fatalf("value = %q, want postgresql://db", value)
 		}
 	})
 }
