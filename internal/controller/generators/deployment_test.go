@@ -127,7 +127,7 @@ func TestGenerateDeployment_DefaultPort(t *testing.T) {
 func TestGenerateDeployment_PrometheusPorts(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("prom-mint")
-	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true, Port: int32Ptr(9090)}
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
 
 	dep, _ := GenerateDeployment(mint, "h", scheme)
 	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
@@ -136,7 +136,7 @@ func TestGenerateDeployment_PrometheusPorts(t *testing.T) {
 	}
 	found := false
 	for _, p := range mintd.Ports {
-		if p.Name == prometheusMetricsPortName && p.ContainerPort == 9090 {
+		if p.Name == prometheusMetricsPortName && p.ContainerPort == mintv1alpha1.DefaultPrometheusPort {
 			found = true
 		}
 	}

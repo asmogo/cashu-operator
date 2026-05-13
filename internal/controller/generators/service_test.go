@@ -154,8 +154,8 @@ func TestGenerateService_PrometheusMetricsPort(t *testing.T) {
 	if port == nil {
 		t.Fatal("metrics port not found")
 	}
-	if port.Port != 9090 {
-		t.Errorf("metrics port = %d, want 9090", port.Port)
+	if port.Port != mintv1alpha1.DefaultPrometheusPort {
+		t.Errorf("metrics port = %d, want %d", port.Port, mintv1alpha1.DefaultPrometheusPort)
 	}
 	if port.TargetPort.StrVal != prometheusMetricsPortName {
 		t.Errorf("metrics target port = %q, want metrics", port.TargetPort.StrVal)

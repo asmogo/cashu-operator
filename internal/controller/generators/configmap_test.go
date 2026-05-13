@@ -254,7 +254,7 @@ func TestGenerateConfigMap_Prometheus(t *testing.T) {
 	cm, _ := GenerateConfigMap(mint, scheme, "")
 	assertContains(t, cm.Data["config.toml"], "[prometheus]")
 	assertContains(t, cm.Data["config.toml"], `address = "0.0.0.0"`)
-	assertContains(t, cm.Data["config.toml"], "port = 9090")
+	assertContains(t, cm.Data["config.toml"], "port = 9000")
 
 	mint.Spec.Prometheus.Address = "127.0.0.1"
 	mint.Spec.Prometheus.Port = int32Ptr(9191)

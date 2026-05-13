@@ -40,6 +40,8 @@ const (
 	DefaultOrchardPostgresImage = "ghcr.io/cashubtc/orchard-mintdb-postgres:1.8.1"
 )
 
+const DefaultPrometheusPort int32 = 9000
+
 func DefaultOrchardImage(databaseEngine string) string {
 	if databaseEngine == DatabaseEnginePostgres {
 		return DefaultOrchardPostgresImage
@@ -1141,7 +1143,7 @@ type PrometheusConfig struct {
 	Address string `json:"address,omitempty"`
 
 	// Port is the listening port for metrics
-	// +kubebuilder:default=9090
+	// +kubebuilder:default=9000
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	// +optional

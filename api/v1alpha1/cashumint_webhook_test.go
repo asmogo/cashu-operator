@@ -238,8 +238,8 @@ func TestDefault_Prometheus(t *testing.T) {
 	if m.Spec.Prometheus.Address != DefaultListenHost {
 		t.Errorf("address = %q, want %q", m.Spec.Prometheus.Address, DefaultListenHost)
 	}
-	if m.Spec.Prometheus.Port == nil || *m.Spec.Prometheus.Port != 9090 {
-		t.Error("port should default to 9090")
+	if m.Spec.Prometheus.Port == nil || *m.Spec.Prometheus.Port != DefaultPrometheusPort {
+		t.Errorf("port should default to %d", DefaultPrometheusPort)
 	}
 }
 
