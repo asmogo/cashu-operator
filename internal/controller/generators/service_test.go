@@ -137,6 +137,70 @@ func TestGenerateService_ManagementRPCPort(t *testing.T) {
 	}
 }
 
+func TestGenerateService_PrometheusMetricsPort(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("metrics-svc")
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
+
+	svc, err := GenerateService(mint, scheme)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(svc.Spec.Ports) != 2 {
+		t.Fatalf("ports count = %d, want 2", len(svc.Spec.Ports))
+	}
+
+	port := servicePortByName(svc, "metrics")
+	if port == nil {
+		t.Fatal("metrics port not found")
+	}
+	if port.Port != 9090 {
+		t.Errorf("metrics port = %d, want 9090", port.Port)
+	}
+	if port.TargetPort.StrVal != "metrics" {
+		t.Errorf("metrics target port = %q, want metrics", port.TargetPort.StrVal)
+	}
+	if port.Protocol != corev1.ProtocolTCP {
+		t.Errorf("metrics protocol = %s, want TCP", port.Protocol)
+	}
+}
+
+func TestGenerateService_PrometheusCustomMetricsPort(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("custom-metrics-svc")
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true, Port: int32Ptr(9191)}
+
+	svc, err := GenerateService(mint, scheme)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	port := servicePortByName(svc, "metrics")
+	if port == nil {
+		t.Fatal("metrics port not found")
+	}
+	if port.Port != 9191 {
+		t.Errorf("metrics port = %d, want 9191", port.Port)
+	}
+	if port.TargetPort.StrVal != "metrics" {
+		t.Errorf("metrics target port = %q, want metrics", port.TargetPort.StrVal)
+	}
+}
+
+func TestGenerateService_PrometheusDisabled(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("metrics-disabled-svc")
+	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: false, Port: int32Ptr(9191)}
+
+	svc, err := GenerateService(mint, scheme)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if servicePortByName(svc, "metrics") != nil {
+		t.Fatal("metrics port should not be present when Prometheus is disabled")
+	}
+}
+
 func TestGenerateService_OwnerReference(t *testing.T) {
 	scheme := testScheme(t)
 	mint := &mintv1alpha1.CashuMint{
@@ -155,4 +219,13 @@ func TestGenerateService_OwnerReference(t *testing.T) {
 	if len(svc.OwnerReferences) == 0 {
 		t.Error("expected owner reference to be set")
 	}
+}
+
+func servicePortByName(svc *corev1.Service, name string) *corev1.ServicePort {
+	for i := range svc.Spec.Ports {
+		if svc.Spec.Ports[i].Name == name {
+			return &svc.Spec.Ports[i]
+		}
+	}
+	return nil
 }
