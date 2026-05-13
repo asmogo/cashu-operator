@@ -49,13 +49,9 @@ func TestGenerateEnvironmentVariables_CoversDirectAndSecretSources(t *testing.T)
 	envVars := generateEnvironmentVariables(mint)
 	values := envVarMap(envVars)
 
-	if values["CDK_MINTD_POSTGRES_URL"] != "postgresql://user:pass@db:5432/cashu" {
-		t.Fatalf("CDK_MINTD_POSTGRES_URL = %q, want direct postgres URL", values["CDK_MINTD_POSTGRES_URL"])
-	}
 	if values["REDIS_CONNECTION_STRING"] != "redis://cache:6379/0" {
 		t.Fatalf("REDIS_CONNECTION_STRING = %q, want direct redis URL", values["REDIS_CONNECTION_STRING"])
 	}
-	assertEnvSecretRef(t, envVars, "CDK_MINTD_AUTH_POSTGRES_URL", "auth-db", "url")
 	assertEnvSecretRef(t, envVars, "LNBITS_ADMIN_API_KEY", "lnbits", "admin")
 	assertEnvSecretRef(t, envVars, "LNBITS_INVOICE_API_KEY", "lnbits", "invoice")
 	assertEnvSecretRef(t, envVars, "BITCOIN_RPC_USER", "bitcoin-rpc", "user")
@@ -74,27 +70,6 @@ func TestGenerateEnvironmentVariables_UsesRedisSecretWhenProvided(t *testing.T) 
 
 	envVars := generateEnvironmentVariables(mint)
 	assertEnvSecretRef(t, envVars, "REDIS_CONNECTION_STRING", "redis-secret", "url")
-}
-
-func TestGenerateEnvironmentVariables_PrometheusEnabled(t *testing.T) {
-	mint := baseMint("prometheus-env")
-
-	values := envVarMap(generateEnvironmentVariables(mint))
-	if _, ok := values["CDK_MINTD_PROMETHEUS_ENABLED"]; ok {
-		t.Fatal("CDK_MINTD_PROMETHEUS_ENABLED should be omitted when Prometheus is not configured")
-	}
-
-	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: false}
-	values = envVarMap(generateEnvironmentVariables(mint))
-	if _, ok := values["CDK_MINTD_PROMETHEUS_ENABLED"]; ok {
-		t.Fatal("CDK_MINTD_PROMETHEUS_ENABLED should be omitted when Prometheus is disabled")
-	}
-
-	mint.Spec.Prometheus = &mintv1alpha1.PrometheusConfig{Enabled: true}
-	values = envVarMap(generateEnvironmentVariables(mint))
-	if values["CDK_MINTD_PROMETHEUS_ENABLED"] != trueStr {
-		t.Fatalf("CDK_MINTD_PROMETHEUS_ENABLED = %q, want %q", values["CDK_MINTD_PROMETHEUS_ENABLED"], trueStr)
-	}
 }
 
 func TestGenerateEnvironmentVariables_GRPCProcessorEnvVars(t *testing.T) {

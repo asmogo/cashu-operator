@@ -708,30 +708,53 @@ func (r *CashuMintReconciler) reconcileBackup(ctx context.Context, cashuMint *mi
 // reconcileConfigMap reconciles the ConfigMap containing config.toml
 func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
 	logger := log.FromContext(ctx)
+	configMint := cashuMint.DeepCopy()
 
 	// Fetch the postgres password if auto-provisioned.
 	// reconcilePostgreSQL runs before this, so the secret should already exist.
 	// If it doesn't exist yet, return an error to requeue rather than writing
 	// an empty password into config.toml (which would cause auth failures in postgres).
 	var dbPassword string
-	if cashuMint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres &&
-		cashuMint.Spec.Database.Postgres != nil &&
-		cashuMint.Spec.Database.Postgres.AutoProvision {
-		secretName := cashuMint.Name + "-postgres-secret"
-		secret := &corev1.Secret{}
-		if err := r.Get(ctx, client.ObjectKey{
-			Namespace: cashuMint.Namespace,
-			Name:      secretName,
-		}, secret); err != nil {
-			return fmt.Errorf("postgres secret %s not ready yet: %w", secretName, err)
-		}
-		dbPassword = string(secret.Data["password"])
-		if dbPassword == "" {
-			return fmt.Errorf("postgres secret %s exists but password key is empty", secretName)
+	if configMint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres &&
+		configMint.Spec.Database.Postgres != nil {
+		pg := configMint.Spec.Database.Postgres
+		if pg.AutoProvision {
+			secretName := configMint.Name + "-postgres-secret"
+			secret := &corev1.Secret{}
+			if err := r.Get(ctx, client.ObjectKey{
+				Namespace: configMint.Namespace,
+				Name:      secretName,
+			}, secret); err != nil {
+				return fmt.Errorf("postgres secret %s not ready yet: %w", secretName, err)
+			}
+			dbPassword = string(secret.Data["password"])
+			if dbPassword == "" {
+				return fmt.Errorf("postgres secret %s exists but password key is empty", secretName)
+			}
+		} else if pg.URLSecretRef != nil {
+			dbURL, err := r.resolveRequiredSecretValue(ctx, configMint.Namespace, pg.URLSecretRef, "spec.database.postgres.urlSecretRef")
+			if err != nil {
+				return err
+			}
+			pg.URL = dbURL
+			pg.URLSecretRef = nil
 		}
 	}
 
-	configMap, err := generators.GenerateConfigMap(cashuMint, r.Scheme, dbPassword)
+	if configMint.Spec.Auth != nil && configMint.Spec.Auth.Enabled &&
+		configMint.Spec.Auth.Database != nil &&
+		configMint.Spec.Auth.Database.Postgres != nil &&
+		configMint.Spec.Auth.Database.Postgres.URLSecretRef != nil {
+		authPg := configMint.Spec.Auth.Database.Postgres
+		authURL, err := r.resolveRequiredSecretValue(ctx, configMint.Namespace, authPg.URLSecretRef, "spec.auth.database.postgres.urlSecretRef")
+		if err != nil {
+			return err
+		}
+		authPg.URL = authURL
+		authPg.URLSecretRef = nil
+	}
+
+	configMap, err := generators.GenerateConfigMap(configMint, r.Scheme, dbPassword)
 	if err != nil {
 		return fmt.Errorf("failed to generate ConfigMap: %w", err)
 	}
@@ -751,6 +774,26 @@ func (r *CashuMintReconciler) reconcileConfigMap(ctx context.Context, cashuMint 
 	})
 
 	return nil
+}
+
+func (r *CashuMintReconciler) resolveRequiredSecretValue(ctx context.Context, namespace string, ref *corev1.SecretKeySelector, fieldPath string) (string, error) {
+	if ref == nil {
+		return "", nil
+	}
+	if ref.Name == "" || ref.Key == "" {
+		return "", fmt.Errorf("%s must specify both secret name and key", fieldPath)
+	}
+
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ref.Name}, secret); err != nil {
+		return "", fmt.Errorf("%s secret %s not ready yet: %w", fieldPath, ref.Name, err)
+	}
+
+	value, ok := secret.Data[ref.Key]
+	if !ok || len(value) == 0 {
+		return "", fmt.Errorf("%s references secret %s key %s, but it is missing or empty", fieldPath, ref.Name, ref.Key)
+	}
+	return string(value), nil
 }
 
 // reconcilePVC reconciles the PersistentVolumeClaim for local storage

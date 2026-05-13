@@ -240,7 +240,7 @@ func TestGenerateDeployment_EnvVars(t *testing.T) {
 	}
 }
 
-func TestGenerateDeployment_PostgresURLSecretRef(t *testing.T) {
+func TestGenerateDeployment_PostgresURLSecretRefNotExportedAsEnv(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("pg-env")
 	mint.Spec.Database = mintv1alpha1.DatabaseConfig{
@@ -255,14 +255,10 @@ func TestGenerateDeployment_PostgresURLSecretRef(t *testing.T) {
 
 	dep, _ := GenerateDeployment(mint, "h", scheme)
 	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
-	found := false
 	for _, e := range mintd.Env {
-		if e.Name == "CDK_MINTD_POSTGRES_URL" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef.Name == "db-secret" {
-			found = true
+		if e.Name == "CDK_MINTD_POSTGRES_URL" {
+			t.Fatal("CDK_MINTD_POSTGRES_URL should be rendered into config.toml, not exported as an env var")
 		}
-	}
-	if !found {
-		t.Error("CDK_MINTD_POSTGRES_URL secret ref missing")
 	}
 }
 

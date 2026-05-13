@@ -316,15 +316,13 @@ func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Cont
 // generateEnvironmentVariables creates environment variables for the mint container
 // generateEnvironmentVariables assembles all env vars for the mintd container
 // by delegating each concern to a focused helper.
-// cdk-mintd >= 0.15.0 calls Settings::from_env() after config-file parsing, so
-// env vars are the authoritative source for every field that has one.
+// Required configuration must still be present in config.toml; env vars here
+// must not be used as a fallback for TOML fields that CDK validates while parsing.
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	envVars := mintCoreEnvVars(mint)
 	envVars = append(envVars, mintLoggingEnvVars(mint)...)
 	envVars = append(envVars, mintMnemonicEnvVars(mint)...)
-	envVars = append(envVars, mintDatabaseEnvVars(mint)...)
 	envVars = append(envVars, mintManagementRPCEnvVars(mint)...)
-	envVars = append(envVars, mintPrometheusEnvVars(mint)...)
 	envVars = append(envVars, mintPaymentBackendEnvVars(mint)...)
 	envVars = append(envVars, mintLDKEnvVars(mint)...)
 	envVars = append(envVars, mintHTTPCacheEnvVars(mint)...)
@@ -393,51 +391,6 @@ func mintMnemonicEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	}}
 }
 
-// mintDatabaseEnvVars injects the postgres connection URL and, when auth is
-// enabled, the auth-database URL.
-func mintDatabaseEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
-	var vars []corev1.EnvVar
-
-	if mint.Spec.Database.Engine == mintv1alpha1.DatabaseEnginePostgres && mint.Spec.Database.Postgres != nil {
-		vars = append(vars, postgresURLEnvVar(mint))
-	}
-
-	if mint.Spec.Auth != nil && mint.Spec.Auth.Enabled &&
-		mint.Spec.Auth.Database != nil && mint.Spec.Auth.Database.Postgres != nil &&
-		mint.Spec.Auth.Database.Postgres.URLSecretRef != nil {
-		vars = append(vars, corev1.EnvVar{
-			Name:      "CDK_MINTD_AUTH_POSTGRES_URL",
-			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: mint.Spec.Auth.Database.Postgres.URLSecretRef},
-		})
-	}
-
-	return vars
-}
-
-// postgresURLEnvVar builds the CDK_MINTD_POSTGRES_URL env var for auto-provisioned,
-// secret-ref, or plain-URL postgres configurations.
-func postgresURLEnvVar(mint *mintv1alpha1.CashuMint) corev1.EnvVar {
-	pg := mint.Spec.Database.Postgres
-	if pg.AutoProvision {
-		return corev1.EnvVar{
-			Name: "CDK_MINTD_POSTGRES_URL",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: mint.Name + "-postgres-secret"},
-					Key:                  "database-url",
-				},
-			},
-		}
-	}
-	if pg.URLSecretRef != nil {
-		return corev1.EnvVar{
-			Name:      "CDK_MINTD_POSTGRES_URL",
-			ValueFrom: &corev1.EnvVarSource{SecretKeyRef: pg.URLSecretRef},
-		}
-	}
-	return corev1.EnvVar{Name: "CDK_MINTD_POSTGRES_URL", Value: pg.URL}
-}
-
 // mintManagementRPCEnvVars injects CDK_MINTD_MINT_MANAGEMENT_ENABLED and related
 // env vars when the management RPC is enabled. The TOML `enabled` field alone is
 // insufficient because from_env() re-initialises the struct from defaults (false)
@@ -466,13 +419,6 @@ func mintManagementRPCEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 		})
 	}
 	return vars
-}
-
-func mintPrometheusEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
-	if mint.Spec.Prometheus == nil || !mint.Spec.Prometheus.Enabled {
-		return nil
-	}
-	return []corev1.EnvVar{{Name: "CDK_MINTD_PROMETHEUS_ENABLED", Value: trueStr}}
 }
 
 // mintPaymentBackendEnvVars injects backend-specific env vars for mintd.

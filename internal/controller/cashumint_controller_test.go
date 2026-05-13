@@ -163,7 +163,7 @@ var _ = Describe("CashuMint Controller", func() {
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 
-		It("should reconcile without blocking when Secrets are missing (Kubernetes handles missing secrets at runtime)", func() {
+		It("should requeue without writing config.toml when a required Secret is missing", func() {
 			controllerReconciler := &CashuMintReconciler{
 				Client:   k8sClient,
 				Recorder: &fakeRecorder{},
@@ -179,15 +179,14 @@ var _ = Describe("CashuMint Controller", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
-			// The simplified reconciler no longer gates on missing secrets;
-			// it proceeds and lets Kubernetes surface missing-secret errors at pod start.
 			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
 
 			updated := &mintv1alpha1.CashuMint{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
-			// Config should be generated and a Deployment created
+
 			configMap := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)).To(Succeed())
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)
+			Expect(errors.IsNotFound(err)).To(BeTrue())
 		})
 	})
 
@@ -697,7 +696,7 @@ var _ = Describe("CashuMint Controller", func() {
 			}
 		})
 
-		It("should set deployment database URL from SecretKeyRef", func() {
+		It("should render database URL from SecretKeyRef into config.toml", func() {
 			controllerReconciler := &CashuMintReconciler{
 				Client:   k8sClient,
 				Recorder: &fakeRecorder{},
@@ -711,25 +710,18 @@ var _ = Describe("CashuMint Controller", func() {
 				Expect(err).NotTo(HaveOccurred())
 			}
 
+			configMap := &corev1.ConfigMap{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)).To(Succeed())
+			Expect(configMap.Data["config.toml"]).To(ContainSubstring(`url = "postgresql://user:pass@db:5432/cdk?sslmode=require"`))
+
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, deployment)).To(Succeed())
 			Expect(deployment.Spec.Template.Spec.Containers).NotTo(BeEmpty())
 
-			var dbEnv *corev1.EnvVar
 			for i := range deployment.Spec.Template.Spec.Containers[0].Env {
 				envVar := &deployment.Spec.Template.Spec.Containers[0].Env[i]
-				if envVar.Name == "CDK_MINTD_POSTGRES_URL" {
-					dbEnv = envVar
-					break
-				}
+				Expect(envVar.Name).NotTo(Equal("CDK_MINTD_POSTGRES_URL"))
 			}
-
-			Expect(dbEnv).NotTo(BeNil())
-			Expect(dbEnv.Value).To(BeEmpty())
-			Expect(dbEnv.ValueFrom).NotTo(BeNil())
-			Expect(dbEnv.ValueFrom.SecretKeyRef).NotTo(BeNil())
-			Expect(dbEnv.ValueFrom.SecretKeyRef.Name).To(Equal(dbSecretName.Name))
-			Expect(dbEnv.ValueFrom.SecretKeyRef.Key).To(Equal("database-url"))
 		})
 	})
 
@@ -805,32 +797,33 @@ var _ = Describe("CashuMint Controller", func() {
 			}
 		})
 
-		It("should reconcile without blocking when a Secret key is missing (Kubernetes handles this at pod start)", func() {
+		It("should fail before writing config.toml when a required Secret key is missing", func() {
 			controllerReconciler := &CashuMintReconciler{
 				Client:   k8sClient,
 				Recorder: &fakeRecorder{},
 				Scheme:   k8sClient.Scheme(),
 			}
 
-			var result reconcile.Result
 			var err error
 			for i := 0; i < 3; i++ {
-				result, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
+				_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 					NamespacedName: typeNamespacedName,
 				})
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					break
+				}
 			}
 
-			// The simplified reconciler no longer gates on missing secret keys;
-			// it proceeds and lets Kubernetes surface the error at pod start.
-			Expect(result.RequeueAfter).To(BeNumerically(">", 0))
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("spec.database.postgres.urlSecretRef"))
+			Expect(err.Error()).To(ContainSubstring("missing or empty"))
 
 			updated := &mintv1alpha1.CashuMint{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, updated)).To(Succeed())
 
-			// Config and Deployment should be created
 			configMap := &corev1.ConfigMap{}
-			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)).To(Succeed())
+			err = k8sClient.Get(ctx, types.NamespacedName{Name: resourceName + "-config", Namespace: "default"}, configMap)
+			Expect(errors.IsNotFound(err)).To(BeTrue())
 		})
 	})
 
