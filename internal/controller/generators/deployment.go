@@ -157,7 +157,7 @@ func generateMintContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
 			metricsPort = *mint.Spec.Prometheus.Port
 		}
 		ports = append(ports, corev1.ContainerPort{
-			Name:          "metrics",
+			Name:          prometheusMetricsPortName,
 			ContainerPort: metricsPort,
 			Protocol:      corev1.ProtocolTCP,
 		})

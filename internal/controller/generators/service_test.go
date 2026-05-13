@@ -150,14 +150,14 @@ func TestGenerateService_PrometheusMetricsPort(t *testing.T) {
 		t.Fatalf("ports count = %d, want 2", len(svc.Spec.Ports))
 	}
 
-	port := servicePortByName(svc, "metrics")
+	port := servicePortByName(svc, prometheusMetricsPortName)
 	if port == nil {
 		t.Fatal("metrics port not found")
 	}
 	if port.Port != 9090 {
 		t.Errorf("metrics port = %d, want 9090", port.Port)
 	}
-	if port.TargetPort.StrVal != "metrics" {
+	if port.TargetPort.StrVal != prometheusMetricsPortName {
 		t.Errorf("metrics target port = %q, want metrics", port.TargetPort.StrVal)
 	}
 	if port.Protocol != corev1.ProtocolTCP {
@@ -175,14 +175,14 @@ func TestGenerateService_PrometheusCustomMetricsPort(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	port := servicePortByName(svc, "metrics")
+	port := servicePortByName(svc, prometheusMetricsPortName)
 	if port == nil {
 		t.Fatal("metrics port not found")
 	}
 	if port.Port != 9191 {
 		t.Errorf("metrics port = %d, want 9191", port.Port)
 	}
-	if port.TargetPort.StrVal != "metrics" {
+	if port.TargetPort.StrVal != prometheusMetricsPortName {
 		t.Errorf("metrics target port = %q, want metrics", port.TargetPort.StrVal)
 	}
 }
@@ -196,7 +196,7 @@ func TestGenerateService_PrometheusDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if servicePortByName(svc, "metrics") != nil {
+	if servicePortByName(svc, prometheusMetricsPortName) != nil {
 		t.Fatal("metrics port should not be present when Prometheus is disabled")
 	}
 }

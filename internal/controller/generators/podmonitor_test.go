@@ -57,7 +57,7 @@ func TestGeneratePodMonitor_Enabled(t *testing.T) {
 	}
 
 	endpoint := podMonitor.Spec.PodMetricsEndpoints[0]
-	if endpoint.Port == nil || *endpoint.Port != "metrics" {
+	if endpoint.Port == nil || *endpoint.Port != prometheusMetricsPortName {
 		t.Fatalf("endpoint port = %v, want metrics", endpoint.Port)
 	}
 	if endpoint.Path != "/metrics" {

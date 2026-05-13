@@ -103,9 +103,9 @@ func GenerateService(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*cor
 			metricsPort = *mint.Spec.Prometheus.Port
 		}
 		ports = append(ports, corev1.ServicePort{
-			Name:       "metrics",
+			Name:       prometheusMetricsPortName,
 			Port:       metricsPort,
-			TargetPort: intstr.FromString("metrics"),
+			TargetPort: intstr.FromString(prometheusMetricsPortName),
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}

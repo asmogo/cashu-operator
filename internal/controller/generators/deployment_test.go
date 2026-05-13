@@ -136,7 +136,7 @@ func TestGenerateDeployment_PrometheusPorts(t *testing.T) {
 	}
 	found := false
 	for _, p := range mintd.Ports {
-		if p.Name == "metrics" && p.ContainerPort == 9090 {
+		if p.Name == prometheusMetricsPortName && p.ContainerPort == 9090 {
 			found = true
 		}
 	}
