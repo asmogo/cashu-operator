@@ -269,7 +269,7 @@ func (r *CashuMint) defaultPrometheus() {
 		r.Spec.Prometheus.Address = DefaultListenHost
 	}
 	if r.Spec.Prometheus.Port == nil {
-		port := int32(9090)
+		port := DefaultPrometheusPort
 		r.Spec.Prometheus.Port = &port
 	}
 }

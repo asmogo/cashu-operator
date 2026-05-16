@@ -96,6 +96,20 @@ func GenerateService(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*cor
 		})
 	}
 
+	// Add Prometheus metrics port if enabled.
+	if mint.Spec.Prometheus != nil && mint.Spec.Prometheus.Enabled {
+		metricsPort := mintv1alpha1.DefaultPrometheusPort
+		if mint.Spec.Prometheus.Port != nil {
+			metricsPort = *mint.Spec.Prometheus.Port
+		}
+		ports = append(ports, corev1.ServicePort{
+			Name:       prometheusMetricsPortName,
+			Port:       metricsPort,
+			TargetPort: intstr.FromString(prometheusMetricsPortName),
+			Protocol:   corev1.ProtocolTCP,
+		})
+	}
+
 	annotations := make(map[string]string)
 	if mint.Spec.Service != nil && mint.Spec.Service.Annotations != nil {
 		annotations = mint.Spec.Service.Annotations

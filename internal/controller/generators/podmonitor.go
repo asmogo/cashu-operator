@@ -56,7 +56,7 @@ func GeneratePodMonitor(mint *mintv1alpha1.CashuMint, scheme *runtime.Scheme) (*
 			},
 			PodMetricsEndpoints: []monitoringv1.PodMetricsEndpoint{
 				{
-					Port: ptr.To("metrics"),
+					Port: ptr.To(prometheusMetricsPortName),
 					Path: "/metrics",
 				},
 			},

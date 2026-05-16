@@ -4021,7 +4021,7 @@ spec:
                     description: Enabled controls whether Prometheus metrics are exposed
                     type: boolean
                   port:
-                    default: 9090
+                    default: 9000
                     description: Port is the listening port for metrics
                     format: int32
                     maximum: 65535

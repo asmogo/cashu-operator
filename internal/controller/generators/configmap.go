@@ -556,7 +556,7 @@ func writePrometheusSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 		address = mintv1alpha1.DefaultListenHost
 	}
 	fmt.Fprintf(buf, "address = %q\n", address)
-	port := int32(9090)
+	port := mintv1alpha1.DefaultPrometheusPort
 	if mint.Spec.Prometheus.Port != nil {
 		port = *mint.Spec.Prometheus.Port
 	}

@@ -23,4 +23,5 @@ const (
 	tapdStr                   = "tapd"
 	fastSSD                   = "fast-ssd"
 	grpcProcessorTLSMountPath = "/secrets/grpc"
+	prometheusMetricsPortName = "metrics"
 )

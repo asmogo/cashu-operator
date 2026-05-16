@@ -294,7 +294,7 @@ Generated or user-provided management RPC TLS Secrets should include:
 | --- | --- |
 | `enabled` | `false` |
 | `address` | `0.0.0.0` |
-| `port` | `9090` |
+| `port` | `9000` |
 
 ### `spec.limits`
 
