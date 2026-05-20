@@ -15,6 +15,7 @@ resources:
   - mint_v1alpha1_cashumint_orchard_postgres.yaml
   - mint_v1alpha1_cashumint_ldk_node.yaml
   - mint_v1alpha1_cashumint_auth_httpcache.yaml
+  - mint_v1alpha1_cashumint_arkade_processor.yaml
   - mint_v1alpha1_cashumint_spark_breez.yaml
   - mint_v1alpha1_cashumint_spark_processor.yaml
   - mint_v1alpha1_cashumint_stripe_processor.yaml

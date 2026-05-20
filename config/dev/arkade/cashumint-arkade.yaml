@@ -1,0 +1,93 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-arkade
+spec:
+  image: cashubtc/mintd:0.16
+  podSecurityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    capabilities:
+      drop:
+        - ALL
+  mintInfo:
+    url: http://arkade-mint.localhost
+    autoGenerateMnemonic: true
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 1Gi
+        version: "16"
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "512Mi"
+  paymentBackend:
+    grpcProcessor:
+      port: 8080
+      supportedUnits:
+        - sat
+      sidecarProcessor:
+        enabled: true
+        image: ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: ASPNETCORE_ENVIRONMENT
+            value: "Production"
+          - name: ASPNETCORE_URLS
+            value: "http://+:8080"
+          - name: Kestrel__EndpointDefaults__Protocols
+            value: "Http2"
+          - name: PROCESSOR_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cashumint-arkade-postgres-secret
+                key: password
+          - name: ConnectionStrings__Ark
+            value: "Host=cashumint-arkade-postgres;Port=5432;Database=cdk_mintd;Username=cdk;Password=$(PROCESSOR_DB_PASSWORD);GSS Encryption Mode=Disable"
+          - name: ArkNetwork__ArkUri
+            value: "https://mutinynet.arkade.sh"
+          - name: ArkNetwork__ArkadeWalletUri
+            value: "https://mutinynet.arkade.money"
+          - name: ArkNetwork__BoltzUri
+            value: "https://api.boltz.mutinynet.arkade.sh/"
+          - name: ArkNetwork__ExplorerUri
+            value: "https://explorer.mutinynet.arkade.sh"
+          - name: NBXplorer__Network
+            value: "Mutinynet"
+          - name: Processor__WalletId
+            value: "arkade-mint"
+          - name: Processor__WalletSecret
+            valueFrom:
+              secretKeyRef:
+                name: arkade-processor-wallet
+                key: wallet-secret
+          - name: Processor__Unit
+            value: "sat"
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+  ingress:
+    enabled: true
+    className: nginx
+    host: arkade-mint.localhost
+    annotations:
+      nginx.ingress.kubernetes.io/ssl-redirect: "false"
+  service:
+    type: ClusterIP
+  logging:
+    level: info
+    format: json

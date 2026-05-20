@@ -67,6 +67,7 @@ curl http://localhost:8085/v1/info
 | LNBits backend | [`mint_v1alpha1_cashumint_lnbits.yaml`](config/samples/mint_v1alpha1_cashumint_lnbits.yaml) |
 | CLN backend | [`mint_v1alpha1_cashumint_cln.yaml`](config/samples/mint_v1alpha1_cashumint_cln.yaml) |
 | External gRPC payment processor | [`mint_v1alpha1_cashumint_grpc_processor_external.yaml`](config/samples/mint_v1alpha1_cashumint_grpc_processor_external.yaml) |
+| Arkade Lightning sidecar processor | [`mint_v1alpha1_cashumint_arkade_processor.yaml`](config/samples/mint_v1alpha1_cashumint_arkade_processor.yaml) |
 | Spark/Breez or Stripe sidecar processors | [`mint_v1alpha1_cashumint_spark_breez.yaml`](config/samples/mint_v1alpha1_cashumint_spark_breez.yaml), [`mint_v1alpha1_cashumint_stripe_processor.yaml`](config/samples/mint_v1alpha1_cashumint_stripe_processor.yaml) |
 | Orchard | [`mint_v1alpha1_cashumint_orchard_sqlite.yaml`](config/samples/mint_v1alpha1_cashumint_orchard_sqlite.yaml), [`mint_v1alpha1_cashumint_orchard_postgres.yaml`](config/samples/mint_v1alpha1_cashumint_orchard_postgres.yaml) |
 | Auth, Redis cache, limits, metrics | [`mint_v1alpha1_cashumint_auth_httpcache.yaml`](config/samples/mint_v1alpha1_cashumint_auth_httpcache.yaml) |
@@ -90,11 +91,19 @@ Once Tilt is running:
 1. `codegen` regenerates manifests and deepcopy code when the API changes.
 2. `unit-tests` is available as a manual Tilt resource for `make test`.
 3. `demo-mint` is available as a manual Tilt resource to apply a minimal `CashuMint` from `config/dev/`.
+4. `demo-arkade-mint` applies a local Arkade processor demo from `config/dev/arkade/`.
 
 To inspect the demo mint after triggering `demo-mint`:
 
 ```bash
 kubectl -n cashu-mints port-forward svc/cashumint-minimal 8085:8085
+curl http://localhost:8085/v1/info
+```
+
+To inspect the Arkade processor demo after triggering `demo-arkade-mint`:
+
+```bash
+kubectl -n cashu-arkade port-forward svc/cashumint-arkade 8085:8085
 curl http://localhost:8085/v1/info
 ```
 

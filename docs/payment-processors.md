@@ -2,7 +2,7 @@
 
 Use `spec.paymentBackend.grpcProcessor` when the mint should talk to a gRPC payment processor instead of LND, CLN, LNBits, or `fakeWallet`.
 
-This is the right place for Spark/Breez, Stripe, or custom payment integrations.
+This is the right place for Arkade Lightning, Spark/Breez, Stripe, or custom payment integrations.
 
 ## How the operator wires CDK
 
@@ -110,6 +110,42 @@ spec:
 
 Without that override, the default remains `http://127.0.0.1`.
 
+## Arkade Lightning sidecar
+
+The Arkade processor at `ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1` implements the CDK payment processor gRPC service over cleartext HTTP/2 on port `8080`.
+
+Set `spec.paymentBackend.grpcProcessor.port: 8080`, enable the sidecar, and pass the processor's .NET/Kestrel and Arkade configuration as sidecar env vars:
+
+```yaml
+spec:
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+  paymentBackend:
+    grpcProcessor:
+      port: 8080
+      supportedUnits:
+        - sat
+      sidecarProcessor:
+        enabled: true
+        image: ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1
+        env:
+          - name: ASPNETCORE_URLS
+            value: "http://+:8080"
+          - name: Kestrel__EndpointDefaults__Protocols
+            value: "Http2"
+          - name: PROCESSOR_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: <mint-name>-postgres-secret
+                key: password
+          - name: ConnectionStrings__Ark
+            value: "Host=<mint-name>-postgres;Port=5432;Database=cdk_mintd;Username=cdk;Password=$(PROCESSOR_DB_PASSWORD);GSS Encryption Mode=Disable"
+```
+
+The sample manifest uses the operator-managed PostgreSQL instance and points the processor at the same `cdk_mintd` database. If you want the processor in a separate database, provide an external PostgreSQL connection string in `ConnectionStrings__Ark`.
+
 ### Sidecar TLS expectations
 
 When `enableTLS=true`, `sidecarProcessor.tlsSecretRef` is required. The operator mounts the named Secret at `/secrets/sidecar-tls`. Your sidecar image is responsible for reading the mounted files and serving TLS correctly.
@@ -119,6 +155,7 @@ When `enableTLS=true`, `sidecarProcessor.tlsSecretRef` is required. The operator
 | Pattern | Sample |
 | --- | --- |
 | External gRPC processor with client TLS | [`mint_v1alpha1_cashumint_grpc_processor_external.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_grpc_processor_external.yaml) |
+| Arkade Lightning sidecar | [`mint_v1alpha1_cashumint_arkade_processor.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_arkade_processor.yaml) |
 | Spark/Breez sidecar | [`mint_v1alpha1_cashumint_spark_breez.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_spark_breez.yaml) |
 | Spark/Breez sidecar with example Secrets | [`mint_v1alpha1_cashumint_spark_processor.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_spark_processor.yaml) |
 | Stripe sidecar | [`mint_v1alpha1_cashumint_stripe_processor.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_stripe_processor.yaml) |

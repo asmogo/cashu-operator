@@ -1,0 +1,94 @@
+---
+# Example Cashu mint wired to the Arkade Lightning gRPC payment processor.
+# The processor image listens on cleartext HTTP/2 gRPC port 8080.
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-arkade-processor
+spec:
+  image: cashubtc/mintd:0.16
+  mintInfo:
+    url: https://arkade-mint.example.com
+    name: "Arkade Cashu Mint"
+    description: "Cashu mint using the Arkade Lightning gRPC payment processor"
+    autoGenerateMnemonic: true
+  database:
+    engine: postgres
+    postgres:
+      autoProvision: true
+      autoProvisionSpec:
+        storageSize: 20Gi
+        version: "16"
+  paymentBackend:
+    grpcProcessor:
+      port: 8080
+      supportedUnits:
+        - sat
+      sidecarProcessor:
+        enabled: true
+        image: ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: ASPNETCORE_ENVIRONMENT
+            value: "Production"
+          - name: ASPNETCORE_URLS
+            value: "http://+:8080"
+          - name: Kestrel__EndpointDefaults__Protocols
+            value: "Http2"
+          - name: PROCESSOR_DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cashumint-arkade-processor-postgres-secret
+                key: password
+          - name: ConnectionStrings__Ark
+            value: "Host=cashumint-arkade-processor-postgres;Port=5432;Database=cdk_mintd;Username=cdk;Password=$(PROCESSOR_DB_PASSWORD);GSS Encryption Mode=Disable"
+          - name: ArkNetwork__ArkUri
+            value: "https://mutinynet.arkade.sh"
+          - name: ArkNetwork__ArkadeWalletUri
+            value: "https://mutinynet.arkade.money"
+          - name: ArkNetwork__BoltzUri
+            value: "https://api.boltz.mutinynet.arkade.sh/"
+          - name: ArkNetwork__ExplorerUri
+            value: "https://explorer.mutinynet.arkade.sh"
+          - name: NBXplorer__Network
+            value: "Mutinynet"
+          - name: Processor__WalletId
+            value: "arkade-mint"
+          - name: Processor__WalletSecret
+            valueFrom:
+              secretKeyRef:
+                name: arkade-processor-wallet
+                key: wallet-secret
+          - name: Processor__Unit
+            value: "sat"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+  ingress:
+    enabled: true
+    host: arkade-mint.example.com
+    tls:
+      enabled: true
+      certManager:
+        enabled: true
+        issuerName: letsencrypt
+        issuerKind: ClusterIssuer
+  service:
+    type: ClusterIP
+  logging:
+    level: info
+    format: json
+
+---
+# Replace with a funded Arkade wallet mnemonic before deploying.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: arkade-processor-wallet
+type: Opaque
+stringData:
+  wallet-secret: ""

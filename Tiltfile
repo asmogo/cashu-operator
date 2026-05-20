@@ -94,6 +94,23 @@ local_resource(
     auto_init=False,
 )
 
+local_resource(
+    'demo-arkade-mint',
+    cmd='kubectl --context %s apply -k config/dev/arkade' % CLUSTER_CONTEXT,
+    deps=['config/dev/arkade'],
+    resource_deps=['manager', 'ingress-nginx'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
+local_resource(
+    'demo-arkade-mint-delete',
+    cmd='kubectl --context %s delete -k config/dev/arkade --ignore-not-found' % CLUSTER_CONTEXT,
+    deps=['config/dev/arkade'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
 k8s_resource(
     'cashu-operator-controller-manager',
     new_name='manager',
