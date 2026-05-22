@@ -1,5 +1,7 @@
 # Image URL to use all building/pushing image targets
 IMG ?= controller:latest
+MINTD_CONFIDENTIAL_IMG ?= cashu-mintd-gke-confidential:latest
+MINTD_BASE_IMAGE ?= cashubtc/mintd@sha256:1551b1b56f8670942164d3831ad00b54d662310bc811458b413a59ffcc7a152e
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
 ifeq (,$(shell go env GOBIN))
@@ -170,6 +172,21 @@ docker-build: ## Build docker image with the manager.
 .PHONY: docker-push
 docker-push: ## Push docker image with the manager.
 	$(CONTAINER_TOOL) push ${IMG}
+
+.PHONY: mintd-confidential-build
+mintd-confidential-build: ## Build the GKE confidential mintd wrapper image.
+	$(CONTAINER_TOOL) build \
+		--build-arg MINTD_BASE_IMAGE=$(MINTD_BASE_IMAGE) \
+		-t $(MINTD_CONFIDENTIAL_IMG) \
+		-f hack/cashu-mintd-gke-confidential.Dockerfile .
+
+.PHONY: mintd-confidential-push
+mintd-confidential-push: ## Push the GKE confidential mintd wrapper image.
+	$(CONTAINER_TOOL) push $(MINTD_CONFIDENTIAL_IMG)
+
+.PHONY: mintd-confidential-smoke
+mintd-confidential-smoke: ## Smoke-test that the GKE confidential mintd wrapper image fails closed locally.
+	bash hack/test-confidential-wrapper-image.sh $(MINTD_CONFIDENTIAL_IMG)
 
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:

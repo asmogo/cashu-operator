@@ -61,6 +61,46 @@ local_resource(
 )
 
 local_resource(
+    'confidential-wrapper-tests',
+    cmd=' && '.join([
+        'go test ./internal/attestedentrypoint ./cmd/cashu-attested-entrypoint',
+        'CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/cashu-attested-entrypoint ./cmd/cashu-attested-entrypoint',
+    ]),
+    deps=[
+        'cmd/cashu-attested-entrypoint',
+        'internal/attestedentrypoint',
+        'go.mod',
+        'go.sum',
+    ],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
+local_resource(
+    'confidential-wrapper-image',
+    cmd='make mintd-confidential-build MINTD_CONFIDENTIAL_IMG=cashu-mintd-gke-confidential:dev',
+    deps=[
+        'cmd/cashu-attested-entrypoint',
+        'internal/attestedentrypoint',
+        'go.mod',
+        'go.sum',
+        'hack/cashu-mintd-gke-confidential.Dockerfile',
+    ],
+    resource_deps=['confidential-wrapper-tests'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
+local_resource(
+    'confidential-wrapper-smoke',
+    cmd='make mintd-confidential-smoke MINTD_CONFIDENTIAL_IMG=cashu-mintd-gke-confidential:dev',
+    deps=['hack/test-confidential-wrapper-image.sh'],
+    resource_deps=['confidential-wrapper-image'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
+local_resource(
     'demo-mint',
     cmd='kubectl --context %s apply -k config/dev' % CLUSTER_CONTEXT,
     deps=['config/dev'],

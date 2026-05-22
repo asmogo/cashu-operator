@@ -1,0 +1,94 @@
+apiVersion: cloud.google.com/v1
+kind: ComputeClass
+metadata:
+  name: cashu-confidential-sev
+spec:
+  nodePoolConfig:
+    confidentialNodeType: SEV
+  nodePoolAutoCreation:
+    enabled: true
+  activeMigration:
+    optimizeRulePriority: true
+  priorityDefaults:
+    location:
+      zones:
+        - us-central1-a
+        - us-central1-b
+  priorities:
+    - machineFamily: n2d
+    - machineType: n2d-standard-4
+  whenUnsatisfiable: DoNotScaleUp
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cashumint-gke-confidential
+  annotations:
+    iam.gke.io/gcp-service-account: cashumint-attested@PROJECT_ID.iam.gserviceaccount.com
+---
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: cashumint-gke-confidential
+spec:
+  image: REGION-docker.pkg.dev/PROJECT_ID/cashu/cashu-mintd-gke-confidential@sha256:REPLACE_WITH_DIGEST
+  serviceAccountName: cashumint-gke-confidential
+  mintInfo:
+    url: https://cashu-confidential.example.com
+    name: Confidential Cashu Mint
+    description: Cashu mint with attested mnemonic retrieval on GKE AMD SEV
+  database:
+    engine: postgres
+    postgres:
+      tlsMode: require
+      urlSecretRef:
+        name: cashumint-gke-confidential-db
+        key: DATABASE_URL
+      maxConnections: 30
+      connectionTimeoutSeconds: 15
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+  service:
+    type: ClusterIP
+  nodeSelector:
+    cloud.google.com/compute-class: cashu-confidential-sev
+    cloud.google.com/gke-confidential-nodes-instance-type: SEV
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+      google.com/cc: "1"
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: false
+    runAsUser: 0
+    capabilities:
+      drop:
+        - ALL
+  extraEnv:
+    - name: CASHU_ATTESTATION_PROJECT_ID
+      value: PROJECT_ID
+    - name: CASHU_ATTESTATION_LOCATION
+      value: us-central1
+    - name: CASHU_ATTESTATION_WORKLOAD_IDENTITY_PROVIDER
+      value: //iam.googleapis.com/projects/PROJECT_NUMBER/locations/global/workloadIdentityPools/POOL_ID/providers/PROVIDER_ID
+    - name: CASHU_ATTESTATION_EXPECTED_SERVICE_ACCOUNT
+      value: cashumint-attested@PROJECT_ID.iam.gserviceaccount.com
+    - name: CASHU_ATTESTATION_EXPECTED_PROJECT_ID
+      value: PROJECT_ID
+    - name: CASHU_ATTESTATION_EXPECTED_ZONE
+      value: us-central1-a
+    - name: CASHU_MNEMONIC_SECRET_VERSION
+      value: projects/PROJECT_ID/secrets/cashumint-mnemonic/versions/latest
+  logging:
+    level: info
+    format: json
