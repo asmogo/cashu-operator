@@ -26,7 +26,7 @@ spec:
         - sat
       sidecarProcessor:
         enabled: true
-        image: ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1
+        image: ghcr.io/d4rp4t/cashu-arkade-lightning-procesor:0.0.0
         imagePullPolicy: IfNotPresent
         env:
           - name: ASPNETCORE_ENVIRONMENT
@@ -91,4 +91,4 @@ metadata:
   name: arkade-processor-wallet
 type: Opaque
 stringData:
-  wallet-secret: ""
+  wallet-secret: "equal since prize angle afford scheme tobacco night lemon unusual define song"
