@@ -91,7 +91,11 @@ Once Tilt is running:
 1. `codegen` regenerates manifests and deepcopy code when the API changes.
 2. `unit-tests` is available as a manual Tilt resource for `make test`.
 3. `demo-mint` is available as a manual Tilt resource to apply a minimal `CashuMint` from `config/dev/`.
-4. `demo-arkade-mint` applies a local Arkade processor demo from `config/dev/arkade/`.
+4. `demo-arkade-mint` builds `/Users/asm/git/cashu-arkade-lightning-procesor`, imports `cashu-arkade-lightning-procesor:dev` into k3d, and applies the Arkade processor demo from `config/dev/arkade/`.
+
+The Arkade demo image build defaults can be overridden with `ARKADE_PROCESSOR_DIR`,
+`ARKADE_PROCESSOR_IMAGE`, `ARKADE_PROCESSOR_DOCKERFILE`, and
+`ARKADE_PROCESSOR_PLATFORM`.
 
 To inspect the demo mint after triggering `demo-mint`:
 

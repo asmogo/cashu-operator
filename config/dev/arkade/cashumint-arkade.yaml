@@ -38,8 +38,8 @@ spec:
         - sat
       sidecarProcessor:
         enabled: true
-        image: ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1
-        imagePullPolicy: IfNotPresent
+        image: cashu-arkade-lightning-procesor:dev
+        imagePullPolicy: Never
         env:
           - name: ASPNETCORE_ENVIRONMENT
             value: "Production"
@@ -61,7 +61,7 @@ spec:
           - name: ArkNetwork__BoltzUri
             value: "https://api.boltz.mutinynet.arkade.sh/"
           - name: ArkNetwork__ExplorerUri
-            value: "https://explorer.mutinynet.arkade.sh"
+            value: "https://mempool.mutinynet.arkade.sh/api/"
           - name: NBXplorer__Network
             value: "Mutinynet"
           - name: Processor__WalletId

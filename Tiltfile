@@ -96,8 +96,17 @@ local_resource(
 
 local_resource(
     'demo-arkade-mint',
-    cmd='kubectl --context %s apply -k config/dev/arkade' % CLUSTER_CONTEXT,
-    deps=['config/dev/arkade'],
+    cmd=' && '.join([
+        'CLUSTER_CONTEXT=%s CLUSTER_NAME=%s hack/build-arkade-processor-local.sh' % (CLUSTER_CONTEXT, CLUSTER_NAME),
+        'kubectl --context %s apply -k config/dev/arkade' % CLUSTER_CONTEXT,
+    ]),
+    deps=[
+        'config/dev/arkade',
+        'hack/arkade-processor-local.Dockerfile',
+        'hack/build-arkade-processor-local.sh',
+        '/Users/asm/git/cashu-arkade-lightning-procesor/NArkNut',
+        '/Users/asm/git/cashu-arkade-lightning-procesor/submodules/NArk',
+    ],
     resource_deps=['manager', 'ingress-nginx'],
     trigger_mode=TRIGGER_MODE_MANUAL,
     auto_init=False,
