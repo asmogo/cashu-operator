@@ -70,7 +70,8 @@ func Run(ctx context.Context, args []string, environ []string, deps Dependencies
 	if err != nil {
 		return fmt.Errorf("Secret Manager read failed: %w", err)
 	}
-	if strings.TrimSpace(mnemonic) == "" {
+	mnemonic = strings.TrimSpace(mnemonic)
+	if mnemonic == "" {
 		return fmt.Errorf("Secret Manager returned an empty mnemonic")
 	}
 

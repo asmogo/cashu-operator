@@ -184,6 +184,10 @@ mintd-confidential-build: ## Build the GKE confidential mintd wrapper image.
 mintd-confidential-push: ## Push the GKE confidential mintd wrapper image.
 	$(CONTAINER_TOOL) push $(MINTD_CONFIDENTIAL_IMG)
 
+.PHONY: mintd-confidential-smoke
+mintd-confidential-smoke: ## Smoke-test that the GKE confidential mintd wrapper image fails closed locally.
+	bash hack/test-confidential-wrapper-image.sh $(MINTD_CONFIDENTIAL_IMG)
+
 # PLATFORMS defines the target platforms for the manager image be built to provide support to multiple
 # architectures. (i.e. make docker-buildx IMG=myregistry/mypoperator:0.0.1). To use this option you need to:
 # - be able to use docker buildx. More info: https://docs.docker.com/build/buildx/

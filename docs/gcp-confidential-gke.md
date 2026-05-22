@@ -67,7 +67,9 @@ The sample includes:
 - `ServiceAccount/cashumint-gke-confidential`
 - `CashuMint.spec.serviceAccountName: cashumint-gke-confidential`
 - `CashuMint.spec.nodeSelector.cloud.google.com/compute-class: cashu-confidential-sev`
+- `CashuMint.spec.nodeSelector.cloud.google.com/gke-confidential-nodes-instance-type: SEV`
 - `CashuMint.spec.resources.limits.google.com/cc: "1"`
+- pod and container security context overrides that run the mint container as UID `0`, because TPM device nodes are commonly root-owned
 - `CashuMint.spec.extraEnv` for the wrapper configuration
 
 ## Wrapper environment
@@ -127,4 +129,18 @@ You can test the wrapper decision logic locally without a cloud cluster:
 go test ./internal/attestedentrypoint
 ```
 
-These tests use fake attestation, STS, Secret Manager, and exec implementations. They prove that the wrapper fails closed and only starts `cdk-mintd` after attestation, claim validation, token exchange, and Secret Manager retrieval succeed. Full vTPM verification still requires GKE AMD SEV hardware.
+These tests use fake attestation, STS, Secret Manager, and exec implementations. They prove that the wrapper fails closed and only starts `cdk-mintd` after attestation, claim validation, token exchange, and Secret Manager retrieval succeed.
+
+Tilt also has local resources for this path:
+
+```sh
+make tilt-up
+```
+
+In the Tilt UI:
+
+- `confidential-wrapper-tests` runs the wrapper unit tests and builds a static Linux entrypoint binary.
+- `confidential-wrapper-image` builds `cashu-mintd-gke-confidential:dev` locally.
+- `confidential-wrapper-smoke` runs the built image and verifies it fails closed without required config and without `/dev/tpmrm0`.
+
+Tilt does not run a successful attested mint locally, because k3d and Kind don't provide GKE Confidential Nodes, Google Cloud Attestation, or `/dev/tpmrm0` through `google.com/cc`. A local Kubernetes run can only prove build behavior and fail-closed behavior; the positive attestation path still requires GKE AMD SEV hardware.

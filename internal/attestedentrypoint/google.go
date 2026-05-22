@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 
@@ -170,7 +171,22 @@ func (r GoogleSecretManagerReader) ReadMnemonic(ctx context.Context, cfg Config,
 type SyscallExecutor struct{}
 
 func (SyscallExecutor) Exec(binary string, args []string, env []string) error {
-	return syscall.Exec(binary, args, env)
+	path, err := resolveBinary(binary)
+	if err != nil {
+		return err
+	}
+	return syscall.Exec(path, args, env)
+}
+
+func resolveBinary(binary string) (string, error) {
+	if strings.Contains(binary, "/") {
+		return binary, nil
+	}
+	path, err := exec.LookPath(binary)
+	if err != nil {
+		return "", fmt.Errorf("find %s in PATH: %w", binary, err)
+	}
+	return path, nil
 }
 
 func doJSON(client *http.Client, req *http.Request, dst any) error {

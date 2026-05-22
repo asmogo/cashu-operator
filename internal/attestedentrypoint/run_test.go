@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"testing"
 	"time"
@@ -89,6 +90,41 @@ func TestValidateAttestationClaimsRejectsWrongClaims(t *testing.T) {
 				t.Fatal("expected validation to fail")
 			}
 		})
+	}
+}
+
+func TestResolveBinarySearchesPath(t *testing.T) {
+	tmp := t.TempDir()
+	binaryPath := tmp + "/cdk-mintd"
+	if err := os.WriteFile(binaryPath, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tmp)
+
+	got, err := resolveBinary("cdk-mintd")
+	if err != nil {
+		t.Fatalf("resolveBinary returned error: %v", err)
+	}
+	if got != binaryPath {
+		t.Fatalf("resolveBinary = %q, want %q", got, binaryPath)
+	}
+}
+
+func TestRunTrimsMnemonic(t *testing.T) {
+	exec := &fakeExecutor{}
+	deps := Dependencies{
+		Attestor:       fakeAttestor{token: testToken(t, map[string]any{})},
+		TokenExchanger: fakeExchanger{token: "sts-token"},
+		SecretReader:   fakeSecretReader{mnemonic: " abandon abandon abandon \n"},
+		Executor:       exec,
+	}
+
+	err := Run(context.Background(), []string{"cashu-attested-entrypoint"}, testEnv(), deps)
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if !slices.Contains(exec.env, "CDK_MINTD_MNEMONIC=abandon abandon abandon") {
+		t.Fatalf("trimmed mnemonic not passed to child environment: %#v", exec.env)
 	}
 }
 
