@@ -54,6 +54,7 @@ spec:
     type: ClusterIP
   nodeSelector:
     cloud.google.com/compute-class: cashu-confidential-sev
+    cloud.google.com/gke-confidential-nodes-instance-type: SEV
   resources:
     requests:
       cpu: 250m
@@ -62,6 +63,17 @@ spec:
       cpu: "1"
       memory: 1Gi
       google.com/cc: "1"
+  podSecurityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+    runAsNonRoot: false
+    runAsUser: 0
+    capabilities:
+      drop:
+        - ALL
   extraEnv:
     - name: CASHU_ATTESTATION_PROJECT_ID
       value: PROJECT_ID
