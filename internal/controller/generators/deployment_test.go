@@ -171,6 +171,23 @@ func TestGenerateDeployment_CustomResources(t *testing.T) {
 	}
 }
 
+func TestGenerateDeployment_ExtendedResourceLimit(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("cc-resource")
+	ccResource := corev1.ResourceName("google.com/cc")
+	mint.Spec.Resources = &corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			ccResource: resource.MustParse("1"),
+		},
+	}
+
+	dep, _ := GenerateDeployment(mint, "h", scheme)
+	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
+	if !mintd.Resources.Limits[ccResource].Equal(resource.MustParse("1")) {
+		t.Error("google.com/cc resource limit not preserved")
+	}
+}
+
 func TestGenerateDeployment_DefaultSecurityContext(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("sec-mint")
@@ -237,6 +254,26 @@ func TestGenerateDeployment_EnvVars(t *testing.T) {
 	}
 	if !found {
 		t.Error("CDK_MINTD_MNEMONIC secret ref missing")
+	}
+}
+
+func TestGenerateDeployment_ExtraEnvAppended(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("extra-env")
+	mint.Spec.ExtraEnv = []corev1.EnvVar{
+		{Name: "CASHU_ATTESTATION_PROJECT_ID", Value: "cashu-prod"},
+		{Name: "CASHU_MNEMONIC_SECRET_VERSION", Value: "projects/cashu-prod/secrets/mint-mnemonic/versions/latest"},
+	}
+
+	dep, _ := GenerateDeployment(mint, "h", scheme)
+	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
+	envMap := envVarMap(mintd.Env)
+
+	if envMap["CASHU_ATTESTATION_PROJECT_ID"] != "cashu-prod" {
+		t.Error("extra env var not applied")
+	}
+	if got, want := mintd.Env[len(mintd.Env)-1].Name, "CASHU_MNEMONIC_SECRET_VERSION"; got != want {
+		t.Errorf("last env var = %q, want %q", got, want)
 	}
 }
 
@@ -358,6 +395,17 @@ func TestGenerateDeployment_ImagePullSecrets(t *testing.T) {
 	}
 	if dep.Spec.Template.Spec.ImagePullSecrets[0].Name != "my-registry-cred" {
 		t.Error("image pull secret name mismatch")
+	}
+}
+
+func TestGenerateDeployment_ServiceAccountName(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("ksa-mint")
+	mint.Spec.ServiceAccountName = "cashumint-gke-confidential"
+
+	dep, _ := GenerateDeployment(mint, "h", scheme)
+	if dep.Spec.Template.Spec.ServiceAccountName != "cashumint-gke-confidential" {
+		t.Errorf("serviceAccountName = %q, want cashumint-gke-confidential", dep.Spec.Template.Spec.ServiceAccountName)
 	}
 }
 

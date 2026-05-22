@@ -113,13 +113,14 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 		containers = append(containers, GenerateOrchardContainer(mint))
 	}
 	podSpec := corev1.PodSpec{
-		Containers:       containers,
-		Volumes:          volumes,
-		ImagePullSecrets: mint.Spec.ImagePullSecrets,
-		NodeSelector:     mint.Spec.NodeSelector,
-		Tolerations:      mint.Spec.Tolerations,
-		Affinity:         mint.Spec.Affinity,
-		SecurityContext:  getPodSecurityContext(mint),
+		Containers:         containers,
+		Volumes:            volumes,
+		ImagePullSecrets:   mint.Spec.ImagePullSecrets,
+		ServiceAccountName: mint.Spec.ServiceAccountName,
+		NodeSelector:       mint.Spec.NodeSelector,
+		Tolerations:        mint.Spec.Tolerations,
+		Affinity:           mint.Spec.Affinity,
+		SecurityContext:    getPodSecurityContext(mint),
 	}
 
 	return podSpec
@@ -327,6 +328,7 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	envVars = append(envVars, mintPaymentBackendEnvVars(mint)...)
 	envVars = append(envVars, mintLDKEnvVars(mint)...)
 	envVars = append(envVars, mintHTTPCacheEnvVars(mint)...)
+	envVars = append(envVars, mint.Spec.ExtraEnv...)
 	return envVars
 }
 

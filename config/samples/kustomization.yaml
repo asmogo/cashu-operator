@@ -19,4 +19,5 @@ resources:
   - mint_v1alpha1_cashumint_spark_processor.yaml
   - mint_v1alpha1_cashumint_stripe_processor.yaml
   - mint_v1alpha1_cashumint_production.yaml
+  - mint_v1alpha1_cashumint_gke_confidential.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

@@ -28,6 +28,7 @@ nav:
   - Overview: index.md
   - Getting started: getting-started.md
   - Deployment guide: deployment-guide.md
+  - GKE confidential mint: gcp-confidential-gke.md
   - Payment processors: payment-processors.md
   - Sample catalog: samples.md
   - API reference: api-reference.md

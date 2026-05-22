@@ -114,6 +114,11 @@ type CashuMintSpec struct {
 	// +optional
 	ImagePullSecrets []corev1.LocalObjectReference `json:"imagePullSecrets,omitempty"`
 
+	// ServiceAccountName is the Kubernetes service account assigned to the mint pod.
+	// Use this for Workload Identity, registry access helpers, or cloud-specific pod identity.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
 	// Replicas is the number of mint instances to run
 	// For production, this should be 1 as the mint is stateful
 	// +kubebuilder:default=1
@@ -171,6 +176,12 @@ type CashuMintSpec struct {
 	// Resources specifies compute resource requirements
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// ExtraEnv appends additional environment variables to the mintd container.
+	// These values are appended after operator-generated environment variables so
+	// wrapper images can be configured without adding provider-specific fields.
+	// +optional
+	ExtraEnv []corev1.EnvVar `json:"extraEnv,omitempty"`
 
 	// NodeSelector for pod assignment
 	// +optional

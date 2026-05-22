@@ -41,6 +41,7 @@ The sample manifests in `config/samples/` are meant to be copied and adapted, no
 | [`mint_v1alpha1_cashumint_orchard_postgres.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_orchard_postgres.yaml) | Orchard with PostgreSQL mint | Auto-generated mnemonic, management RPC mTLS, cert-manager |
 | [`mint_v1alpha1_cashumint_orchard_setup_secret.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_orchard_setup_secret.yaml) | Helper Secret for Orchard | Example setup key Secret |
 | [`mint_v1alpha1_cashumint_production.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_production.yaml) | Production-style reference | PostgreSQL, backups, ingress, Prometheus, resource tuning, external gRPC processor |
+| [`mint_v1alpha1_cashumint_gke_confidential.yaml`](https://github.com/asmogo/cashu-operator/blob/main/config/samples/mint_v1alpha1_cashumint_gke_confidential.yaml) | GKE Confidential Nodes | ComputeClass, vTPM resource limit, Workload Identity service account, attested mnemonic wrapper env |
 
 ## Adapting a sample safely
 

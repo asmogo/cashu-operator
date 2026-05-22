@@ -27,9 +27,10 @@ spec:
 
 | Field | Type | Default | Notes |
 | --- | --- | --- | --- |
-| `image` | string | `cashubtc/mintd:0.15.0` | Mint container image |
+| `image` | string | `cashubtc/mintd:0.16` | Mint container image |
 | `imagePullPolicy` | string | `IfNotPresent` | Standard Kubernetes pull policy |
 | `imagePullSecrets` | `[]LocalObjectReference` | none | For private registries |
+| `serviceAccountName` | string | none | Kubernetes service account for the mint pod |
 | `replicas` | int32 | `1` | Valid range is `1..1` |
 | `mintInfo` | `MintInfo` | required | Public URL, metadata, mnemonic handling |
 | `database` | `DatabaseConfig` | required | `postgres`, `sqlite`, or `redb` |
@@ -44,6 +45,7 @@ spec:
 | `ingress` | `IngressConfig` | disabled | Public mint ingress |
 | `service` | `ServiceConfig` | `ClusterIP` when set | Main Service config |
 | `resources` | `ResourceRequirements` | operator defaults | Mint container resources |
+| `extraEnv` | `[]EnvVar` | none | Appended to the mint container env |
 | `nodeSelector` / `tolerations` / `affinity` | Kubernetes types | none | Pod placement |
 | `logging` | `LoggingConfig` | `info` / `json` when set | CDK log settings |
 | `storage` | `StorageConfig` | `10Gi` when set | PVC config for embedded DBs and shared data |
