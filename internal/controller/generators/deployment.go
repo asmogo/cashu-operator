@@ -48,6 +48,14 @@ func GenerateDeployment(mint *mintv1alpha1.CashuMint, configHash string, scheme 
 	podAnnotations := map[string]string{
 		"config-hash": configHash,
 	}
+	// Merge user-supplied pod annotations (e.g. Kata machine_type for TEE/peer-pods).
+	// config-hash is reserved and takes precedence.
+	for k, v := range mint.Spec.PodAnnotations {
+		if k == "config-hash" {
+			continue
+		}
+		podAnnotations[k] = v
+	}
 
 	deployment := &appsv1.Deployment{
 		TypeMeta: metav1.TypeMeta{
@@ -120,6 +128,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 		Tolerations:      mint.Spec.Tolerations,
 		Affinity:         mint.Spec.Affinity,
 		SecurityContext:  getPodSecurityContext(mint),
+		RuntimeClassName: mint.Spec.RuntimeClassName,
 	}
 
 	return podSpec

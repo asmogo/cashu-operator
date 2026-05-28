@@ -1,0 +1,51 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: tee-mint
+  namespace: default
+spec:
+  image: cashubtc/mintd:0.16
+  replicas: 1
+  runtimeClassName: kata-remote
+  # Pin the cloud instance type for the peer-pod VM (cloud-api-adaptor).
+  # Required on GCP: the adaptor's dynamic machine-type selection cannot match
+  # vCPU/memory hints (its MachineTypeSpecList is never populated), so we set
+  # the Kata machine_type annotation which takes priority and bypasses it.
+  # Must be a SEV-capable type matching GCP_MACHINE_TYPE in peer-pods-cm.
+  podAnnotations:
+    io.katacontainers.config.hypervisor.machine_type: "n2d-standard-4"
+  nodeSelector:
+    cashu-coco-peer: "true"
+  tolerations:
+    - key: kata-remote
+      operator: Exists
+      effect: NoSchedule
+  mintInfo:
+    url: http://tee-mint.default.svc.cluster.local:8085
+    listenHost: 0.0.0.0
+    listenPort: 8085
+    autoGenerateMnemonic: true
+    name: TEE Cashu Mint
+    description: Cashu mint running in TEE with Kata Containers
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+      feePercent: 0.02
+      reserveFeeMin: 1
+      minDelayTime: 1
+      maxDelayTime: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  logging:
+    level: info
+    format: json

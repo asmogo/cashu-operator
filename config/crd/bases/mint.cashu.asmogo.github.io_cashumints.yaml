@@ -3775,6 +3775,15 @@ spec:
                     format: int64
                     type: integer
                 type: object
+              podAnnotations:
+                additionalProperties:
+                  type: string
+                description: |-
+                  PodAnnotations are extra annotations added to the mint pod template.
+                  Useful for TEE/Kata deployments, e.g. setting
+                  "io.katacontainers.config.hypervisor.machine_type" to pin the cloud
+                  instance type for peer-pods (cloud-api-adaptor).
+                type: object
               podSecurityContext:
                 description: |-
                   PodSecurityContext specifies the security context for the pod
@@ -4098,6 +4107,10 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
+              runtimeClassName:
+                description: RuntimeClassName specifies the container runtime class
+                  to use (e.g., kata-remote for TEE)
+                type: string
               service:
                 description: Service specifies service configuration
                 properties:

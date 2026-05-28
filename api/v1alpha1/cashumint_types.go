@@ -205,6 +205,17 @@ type CashuMintSpec struct {
 	// If not specified, defaults to AllowPrivilegeEscalation=false, ReadOnlyRootFilesystem=false, RunAsNonRoot=true
 	// +optional
 	ContainerSecurityContext *corev1.SecurityContext `json:"containerSecurityContext,omitempty"`
+
+	// RuntimeClassName specifies the container runtime class to use (e.g., kata-remote for TEE)
+	// +optional
+	RuntimeClassName *string `json:"runtimeClassName,omitempty"`
+
+	// PodAnnotations are extra annotations added to the mint pod template.
+	// Useful for TEE/Kata deployments, e.g. setting
+	// "io.katacontainers.config.hypervisor.machine_type" to pin the cloud
+	// instance type for peer-pods (cloud-api-adaptor).
+	// +optional
+	PodAnnotations map[string]string `json:"podAnnotations,omitempty"`
 }
 
 // MintInfo contains metadata about the mint
