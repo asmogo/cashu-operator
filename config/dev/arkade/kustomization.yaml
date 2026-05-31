@@ -1,0 +1,6 @@
+namespace: cashu-arkade
+
+resources:
+  - namespace.yaml
+  - arkade-processor-wallet-secret.yaml
+  - cashumint-arkade.yaml

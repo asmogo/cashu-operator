@@ -333,6 +333,60 @@ func TestGenerateDeployment_SidecarProcessor(t *testing.T) {
 	}
 }
 
+func TestGenerateDeployment_ArkadeProcessorSidecar(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("cashumint-arkade-processor")
+	mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{
+		GRPCProcessor: &mintv1alpha1.GRPCProcessorConfig{
+			Port: 8080,
+			SupportedUnits: []string{
+				"sat",
+			},
+			SidecarProcessor: &mintv1alpha1.SidecarProcessorConfig{
+				Enabled: true,
+				Image:   "ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1",
+				Env: []corev1.EnvVar{
+					{Name: "ASPNETCORE_URLS", Value: "http://+:8080"},
+					{Name: "Kestrel__EndpointDefaults__Protocols", Value: "Http2"},
+					{
+						Name: "ConnectionStrings__Ark",
+						Value: "Host=cashumint-arkade-processor-postgres;Port=5432;Database=cdk_mintd;" +
+							"Username=cdk;Password=$(PROCESSOR_DB_PASSWORD);GSS Encryption Mode=Disable",
+					},
+					{Name: "Processor__WalletSecret", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "arkade-processor-wallet"},
+						Key:                  "wallet-secret",
+					}}},
+				},
+			},
+		},
+	}
+
+	dep, err := GenerateDeployment(mint, "h", scheme)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	sidecar := findContainer(dep.Spec.Template.Spec.Containers, "grpc-processor")
+	if sidecar.Image != "ghcr.io/asmogo/cashu-arkade-lightning-procesor:0.0.1" {
+		t.Errorf("sidecar image = %q, want Arkade processor image", sidecar.Image)
+	}
+	if sidecar.Ports[0].ContainerPort != 8080 {
+		t.Errorf("sidecar port = %d, want 8080", sidecar.Ports[0].ContainerPort)
+	}
+
+	env := envVarMap(sidecar.Env)
+	if env["ASPNETCORE_URLS"] != "http://+:8080" {
+		t.Errorf("ASPNETCORE_URLS = %q, want http://+:8080", env["ASPNETCORE_URLS"])
+	}
+	if env["Kestrel__EndpointDefaults__Protocols"] != "Http2" {
+		t.Errorf("Kestrel protocol = %q, want Http2", env["Kestrel__EndpointDefaults__Protocols"])
+	}
+	if env["ConnectionStrings__Ark"] == "" {
+		t.Error("expected Arkade processor database connection string env")
+	}
+}
+
 func TestGenerateDeployment_LDKSidecar(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("ldk-deploy")

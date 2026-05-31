@@ -94,6 +94,32 @@ local_resource(
     auto_init=False,
 )
 
+local_resource(
+    'demo-arkade-mint',
+    cmd=' && '.join([
+        'CLUSTER_CONTEXT=%s CLUSTER_NAME=%s hack/build-arkade-processor-local.sh' % (CLUSTER_CONTEXT, CLUSTER_NAME),
+        'kubectl --context %s apply -k config/dev/arkade' % CLUSTER_CONTEXT,
+    ]),
+    deps=[
+        'config/dev/arkade',
+        'hack/arkade-processor-local.Dockerfile',
+        'hack/build-arkade-processor-local.sh',
+        '/Users/asm/git/cashu-arkade-lightning-procesor/NArkNut',
+        '/Users/asm/git/cashu-arkade-lightning-procesor/submodules/NArk',
+    ],
+    resource_deps=['manager', 'ingress-nginx'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
+local_resource(
+    'demo-arkade-mint-delete',
+    cmd='kubectl --context %s delete -k config/dev/arkade --ignore-not-found' % CLUSTER_CONTEXT,
+    deps=['config/dev/arkade'],
+    trigger_mode=TRIGGER_MODE_MANUAL,
+    auto_init=False,
+)
+
 k8s_resource(
     'cashu-operator-controller-manager',
     new_name='manager',
