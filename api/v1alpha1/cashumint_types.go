@@ -63,6 +63,26 @@ func ManagementRPCTLSSecretName(spec *CashuMintSpec, mintName string) string {
 	return mintName + "-management-rpc-tls"
 }
 
+func TEEEnabled(spec *CashuMintSpec) bool {
+	return spec != nil && spec.TEE != nil && spec.TEE.Enabled
+}
+
+// OnChainEnabled reports whether an on-chain backend is configured.
+func OnChainEnabled(spec *CashuMintSpec) bool {
+	return spec != nil && spec.OnChain != nil && spec.OnChain.Backend != ""
+}
+
+// On-chain backend values
+const (
+	OnChainBackendBDK        = "bdk"
+	OnChainBackendFakeWallet = "fakewallet"
+	OnChainBackendNone       = "none"
+)
+
+// LNBackendValueNone is the value used for CDK_MINTD_LN_BACKEND when no
+// Lightning backend is configured (on-chain-only mint).
+const LNBackendValueNone = "none"
+
 // Payment backend values
 const (
 	PaymentBackendLND           = "lnd"
@@ -131,6 +151,13 @@ type CashuMintSpec struct {
 	// PaymentBackend specifies the payment backend configuration.
 	// Exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor).
 	PaymentBackend PaymentBackendConfig `json:"paymentBackend"`
+
+	// OnChain specifies an on-chain (Bitcoin) payment backend. When set, the
+	// mint serves the "onchain" payment method. It may be used together with a
+	// Lightning backend, or on its own (in which case CDK_MINTD_LN_BACKEND is
+	// set to "none").
+	// +optional
+	OnChain *OnChainConfig `json:"onChain,omitempty"`
 
 	// LDKNode specifies optional LDK node configuration
 	// +optional
@@ -216,6 +243,59 @@ type CashuMintSpec struct {
 	// instance type for peer-pods (cloud-api-adaptor).
 	// +optional
 	PodAnnotations map[string]string `json:"podAnnotations,omitempty"`
+
+	// TEE specifies Trusted Execution Environment configuration.
+	// When enabled, the mnemonic is delivered via a sealed-secret reference
+	// that is unsealed inside the TEE by the Confidential Data Hub (CDH)
+	// after remote attestation against a Key Broker Service (KBS).
+	// The operator skips mnemonic auto-generation and injects the sealed
+	// reference string directly as env var values.
+	// +optional
+	TEE *TEEConfig `json:"tee,omitempty"`
+}
+
+// TEEConfig specifies Trusted Execution Environment configuration for
+// confidential mint deployments using Intel TDX / AMD SEV-SNP with
+// Kata Containers (peer-pods / cloud-api-adaptor) and Trustee KBS.
+type TEEConfig struct {
+	// Enabled controls whether TEE mode is active.
+	// When true, the deployment uses sealed-secret env vars instead of
+	// Kubernetes Secret references for the mnemonic, and the deployment
+	// strategy is set to Recreate (VM re-provisioning does not support
+	// rolling updates).
+	// +kubebuilder:default=false
+	Enabled bool `json:"enabled"`
+
+	// SealedSecret is the sealed-secret reference string used as the
+	// mnemonic env var value. It has the format
+	// "sealed.<header>.<payload>.<signature>" where the payload is a
+	// vault-type reference pointing at a KBS resource.
+	// The real mnemonic is fetched and decrypted inside the TEE at
+	// container start by the Confidential Data Hub (CDH).
+	// +optional
+	SealedSecret string `json:"sealedSecret,omitempty"`
+
+	// KBS specifies the Key Broker Service configuration used to
+	// generate the cc_init_data annotation for the pod VM.
+	// +optional
+	KBS *TEEKBSConfig `json:"kbs,omitempty"`
+}
+
+// TEEKBSConfig specifies Key Broker Service configuration for TEE deployments.
+type TEEKBSConfig struct {
+	// URL is the KBS endpoint URL reachable from the pod VM.
+	// This is baked into the cc_init_data annotation (aa.toml and cdh.toml)
+	// and used by the Attestation Agent and Confidential Data Hub.
+	URL string `json:"url"`
+
+	// SkipSealedSecretVerification disables JWS signature verification
+	// on sealed-secret references in the CDH. When true, the CDH trusts
+	// the reference payload without checking the signature. Security is
+	// still enforced by attestation (KBS won't release the resource to a
+	// non-TEE).
+	// +kubebuilder:default=true
+	// +optional
+	SkipSealedSecretVerification *bool `json:"skipSealedSecretVerification,omitempty"`
 }
 
 // MintInfo contains metadata about the mint
@@ -479,6 +559,60 @@ func (p *PaymentBackendConfig) ActiveBackend() string {
 		return ""
 	}
 	return result
+}
+
+// OnChainConfig specifies an on-chain (Bitcoin) payment backend for the mint.
+type OnChainConfig struct {
+	// Backend selects the on-chain backend implementation.
+	// +kubebuilder:validation:Enum=bdk;fakewallet;none
+	// +kubebuilder:default=bdk
+	Backend string `json:"backend"`
+
+	// BDK configures the BDK on-chain wallet backend (used when backend=bdk).
+	// +optional
+	BDK *BDKConfig `json:"bdk,omitempty"`
+}
+
+// BDKConfig configures the BDK on-chain wallet backend.
+type BDKConfig struct {
+	// Network is the Bitcoin network: mainnet, testnet, signet, or regtest.
+	// (Mutinynet is a custom signet, so use "signet" with a Mutinynet esplora URL.)
+	// +kubebuilder:validation:Enum=mainnet;testnet;signet;regtest
+	Network string `json:"network"`
+
+	// ChainSourceType is the chain backend: esplora or bitcoinrpc.
+	// +kubebuilder:validation:Enum=esplora;bitcoinrpc
+	// +kubebuilder:default=esplora
+	// +optional
+	ChainSourceType string `json:"chainSourceType,omitempty"`
+
+	// EsploraURL is the Esplora API URL (when chainSourceType=esplora).
+	// +optional
+	EsploraURL string `json:"esploraUrl,omitempty"`
+
+	// EsploraParallelRequests limits concurrent Esplora requests.
+	// +kubebuilder:default=1
+	// +optional
+	EsploraParallelRequests *int32 `json:"esploraParallelRequests,omitempty"`
+
+	// NumConfs is the number of confirmations required.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=2
+	// +optional
+	NumConfs *int32 `json:"numConfs,omitempty"`
+
+	// MinReceiveAmountSat is the minimum inbound amount that counts toward minting.
+	// +optional
+	MinReceiveAmountSat *int64 `json:"minReceiveAmountSat,omitempty"`
+
+	// MinSendAmountSat is the minimum outbound melt/send amount.
+	// +optional
+	MinSendAmountSat *int64 `json:"minSendAmountSat,omitempty"`
+
+	// MnemonicSecretRef references a Secret containing the BDK wallet mnemonic.
+	// Ignored when TEE mode is enabled (the sealed-secret reference is used).
+	// +optional
+	MnemonicSecretRef *corev1.SecretKeySelector `json:"mnemonicSecretRef,omitempty"`
 }
 
 // LNDConfig specifies LND backend configuration

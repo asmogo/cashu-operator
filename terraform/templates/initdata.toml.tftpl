@@ -1,0 +1,21 @@
+algorithm = "sha384"
+version   = "0.1.0"
+
+[data]
+"aa.toml" = """
+[token_configs]
+[token_configs.kbs]
+url = "${kbs_url}"
+
+[eventlog_config]
+init_pcr = 17
+enable_eventlog = false
+"""
+
+"cdh.toml" = """
+socket = "unix:///run/confidential-containers/cdh.sock"
+skip_sealed_secret_verification = true
+[kbc]
+name = "cc_kbc"
+url = "${kbs_url}"
+"""

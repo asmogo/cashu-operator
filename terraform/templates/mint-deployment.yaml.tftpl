@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tee-mint
+  namespace: default
+  labels:
+    app.kubernetes.io/instance: tee-mint
+    app.kubernetes.io/managed-by: cashu-operator
+    app.kubernetes.io/name: cashu-mint
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: tee-mint
+      app.kubernetes.io/managed-by: cashu-operator
+      app.kubernetes.io/name: cashu-mint
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      annotations:
+        # initdata: aa.toml + cdh.toml, gzip+base64. Measured into a TDX RTMR.
+        io.katacontainers.config.hypervisor.cc_init_data: "${initdata_b64}"
+        io.katacontainers.config.hypervisor.machine_type: "${podvm_machine_type}"
+      labels:
+        app.kubernetes.io/instance: tee-mint
+        app.kubernetes.io/managed-by: cashu-operator
+        app.kubernetes.io/name: cashu-mint
+    spec:
+      runtimeClassName: kata-remote
+      nodeSelector:
+        ${worker_label}: "true"
+      tolerations:
+        - key: kata-remote
+          effect: NoSchedule
+          operator: Exists
+      securityContext:
+        fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: mintd
+          image: ${mint_image}
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: api
+              containerPort: 8085
+              protocol: TCP
+          env:
+            - { name: CDK_MINTD_WORK_DIR, value: /data }
+            - { name: HOME, value: /data }
+            - { name: CDK_MINTD_LN_BACKEND, value: none }
+            - { name: CDK_MINTD_URL, value: "http://tee-mint.default.svc.cluster.local:8085" }
+            - { name: CDK_MINTD_LISTEN_HOST, value: "0.0.0.0" }
+            - { name: CDK_MINTD_LISTEN_PORT, value: "8085" }
+            - { name: CDK_MINTD_DATABASE, value: sqlite }
+            - { name: CDK_MINTD_LOGGING_OUTPUT, value: stderr }
+            - { name: RUST_LOG, value: info }
+            - { name: CDK_MINTD_LOGGING_CONSOLE_LEVEL, value: info }
+            # Mnemonic: sealed reference, unsealed inside the TEE from KBS.
+            - { name: CDK_MINTD_MNEMONIC, value: "${sealed_secret}" }
+            - { name: CDK_MINTD_ONCHAIN_BACKEND, value: bdk }
+            - { name: CDK_MINTD_BDK_NETWORK, value: "${bdk_network}" }
+            - { name: CDK_MINTD_BDK_CHAIN_SOURCE_TYPE, value: esplora }
+            - { name: CDK_MINTD_BDK_ESPLORA_URL, value: "${bdk_esplora_url}" }
+            - { name: CDK_MINTD_BDK_ESPLORA_PARALLEL_REQUESTS, value: "1" }
+            - { name: CDK_MINTD_BDK_NUM_CONFS, value: "${bdk_num_confs}" }
+            - { name: CDK_MINTD_BDK_MNEMONIC, value: "${sealed_secret}" }
+            - { name: CDK_MINTD_MINT_NAME, value: "${mint_name}" }
+            - { name: CDK_MINTD_MINT_DESCRIPTION, value: "${mint_description}" }
+          livenessProbe:
+            httpGet: { path: /v1/info, port: api }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet: { path: /v1/info, port: api }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: 500m, memory: 512Mi }
+            limits: { cpu: "2", memory: 2Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - { name: data, mountPath: /data }
+            - { name: config, mountPath: /data/config.toml, subPath: config.toml, readOnly: true }
+      volumes:
+        - name: config
+          configMap:
+            name: tee-mint-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: tee-mint-data

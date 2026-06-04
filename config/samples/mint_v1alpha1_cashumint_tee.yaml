@@ -4,29 +4,29 @@ metadata:
   name: tee-mint
   namespace: default
 spec:
-  image: cashubtc/mintd:0.16
+  image: cashubtc/mintd:0.17.0-rc.0
   replicas: 1
   runtimeClassName: kata-remote
-  # Pin the cloud instance type for the peer-pod VM (cloud-api-adaptor).
-  # Required on GCP: the adaptor's dynamic machine-type selection cannot match
-  # vCPU/memory hints (its MachineTypeSpecList is never populated), so we set
-  # the Kata machine_type annotation which takes priority and bypasses it.
-  # Must be a SEV-capable type matching GCP_MACHINE_TYPE in peer-pods-cm.
   podAnnotations:
-    io.katacontainers.config.hypervisor.machine_type: "n2d-standard-4"
+    io.katacontainers.config.hypervisor.machine_type: "c3-standard-4"
   nodeSelector:
     cashu-coco-peer: "true"
   tolerations:
     - key: kata-remote
       operator: Exists
       effect: NoSchedule
+  tee:
+    enabled: true
+    sealedSecret: "sealed.placeholder.header.payload.signature"
+    kbs:
+      url: "http://10.128.0.9:30510"
+      skipSealedSecretVerification: true
   mintInfo:
-    url: http://tee-mint.default.svc.cluster.local:8085
+    url: https://tee.ucash.space
     listenHost: 0.0.0.0
     listenPort: 8085
-    autoGenerateMnemonic: true
-    name: TEE Cashu Mint
-    description: Cashu mint running in TEE with Kata Containers
+    name: ucash
+    description: Confidential Cashu mint on Mutinynet (signet) running in Intel TDX TEE
   database:
     engine: sqlite
     sqlite:

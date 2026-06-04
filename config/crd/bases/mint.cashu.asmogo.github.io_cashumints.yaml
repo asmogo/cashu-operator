@@ -2229,6 +2229,100 @@ spec:
                   type: string
                 description: NodeSelector for pod assignment
                 type: object
+              onChain:
+                description: |-
+                  OnChain specifies an on-chain (Bitcoin) payment backend. When set, the
+                  mint serves the "onchain" payment method. It may be used together with a
+                  Lightning backend, or on its own (in which case CDK_MINTD_LN_BACKEND is
+                  set to "none").
+                properties:
+                  backend:
+                    default: bdk
+                    description: Backend selects the on-chain backend implementation.
+                    enum:
+                    - bdk
+                    - fakewallet
+                    - none
+                    type: string
+                  bdk:
+                    description: BDK configures the BDK on-chain wallet backend (used
+                      when backend=bdk).
+                    properties:
+                      chainSourceType:
+                        default: esplora
+                        description: 'ChainSourceType is the chain backend: esplora
+                          or bitcoinrpc.'
+                        enum:
+                        - esplora
+                        - bitcoinrpc
+                        type: string
+                      esploraParallelRequests:
+                        default: 1
+                        description: EsploraParallelRequests limits concurrent Esplora
+                          requests.
+                        format: int32
+                        type: integer
+                      esploraUrl:
+                        description: EsploraURL is the Esplora API URL (when chainSourceType=esplora).
+                        type: string
+                      minReceiveAmountSat:
+                        description: MinReceiveAmountSat is the minimum inbound amount
+                          that counts toward minting.
+                        format: int64
+                        type: integer
+                      minSendAmountSat:
+                        description: MinSendAmountSat is the minimum outbound melt/send
+                          amount.
+                        format: int64
+                        type: integer
+                      mnemonicSecretRef:
+                        description: |-
+                          MnemonicSecretRef references a Secret containing the BDK wallet mnemonic.
+                          Ignored when TEE mode is enabled (the sealed-secret reference is used).
+                        properties:
+                          key:
+                            description: The key of the secret to select from.  Must
+                              be a valid secret key.
+                            type: string
+                          name:
+                            default: ""
+                            description: |-
+                              Name of the referent.
+                              This field is effectively required, but due to backwards compatibility is
+                              allowed to be empty. Instances of this type with an empty value here are
+                              almost certainly wrong.
+                              More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                            type: string
+                          optional:
+                            description: Specify whether the Secret or its key must
+                              be defined
+                            type: boolean
+                        required:
+                        - key
+                        type: object
+                        x-kubernetes-map-type: atomic
+                      network:
+                        description: |-
+                          Network is the Bitcoin network: mainnet, testnet, signet, or regtest.
+                          (Mutinynet is a custom signet, so use "signet" with a Mutinynet esplora URL.)
+                        enum:
+                        - mainnet
+                        - testnet
+                        - signet
+                        - regtest
+                        type: string
+                      numConfs:
+                        default: 2
+                        description: NumConfs is the number of confirmations required.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                    required:
+                    - network
+                    type: object
+                required:
+                - backend
+                type: object
               orchard:
                 description: Orchard specifies optional Orchard deployment alongside
                   the mint
@@ -4142,6 +4236,59 @@ spec:
                   storageClassName:
                     description: StorageClassName is the storage class name
                     type: string
+                type: object
+              tee:
+                description: |-
+                  TEE specifies Trusted Execution Environment configuration.
+                  When enabled, the mnemonic is delivered via a sealed-secret reference
+                  that is unsealed inside the TEE by the Confidential Data Hub (CDH)
+                  after remote attestation against a Key Broker Service (KBS).
+                  The operator skips mnemonic auto-generation and injects the sealed
+                  reference string directly as env var values.
+                properties:
+                  enabled:
+                    default: false
+                    description: |-
+                      Enabled controls whether TEE mode is active.
+                      When true, the deployment uses sealed-secret env vars instead of
+                      Kubernetes Secret references for the mnemonic, and the deployment
+                      strategy is set to Recreate (VM re-provisioning does not support
+                      rolling updates).
+                    type: boolean
+                  kbs:
+                    description: |-
+                      KBS specifies the Key Broker Service configuration used to
+                      generate the cc_init_data annotation for the pod VM.
+                    properties:
+                      skipSealedSecretVerification:
+                        default: true
+                        description: |-
+                          SkipSealedSecretVerification disables JWS signature verification
+                          on sealed-secret references in the CDH. When true, the CDH trusts
+                          the reference payload without checking the signature. Security is
+                          still enforced by attestation (KBS won't release the resource to a
+                          non-TEE).
+                        type: boolean
+                      url:
+                        description: |-
+                          URL is the KBS endpoint URL reachable from the pod VM.
+                          This is baked into the cc_init_data annotation (aa.toml and cdh.toml)
+                          and used by the Attestation Agent and Confidential Data Hub.
+                        type: string
+                    required:
+                    - url
+                    type: object
+                  sealedSecret:
+                    description: |-
+                      SealedSecret is the sealed-secret reference string used as the
+                      mnemonic env var value. It has the format
+                      "sealed.<header>.<payload>.<signature>" where the payload is a
+                      vault-type reference pointing at a KBS resource.
+                      The real mnemonic is fetched and decrypted inside the TEE at
+                      container start by the Confidential Data Hub (CDH).
+                    type: string
+                required:
+                - enabled
                 type: object
               tolerations:
                 description: Tolerations for pod assignment

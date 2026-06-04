@@ -240,6 +240,32 @@ func TestGenerateDeployment_EnvVars(t *testing.T) {
 	}
 }
 
+func TestGenerateDeployment_MintInfoEnvVars(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("mint-info-env")
+	mint.Spec.MintInfo.Name = "TEE Mainnet Mint"
+	mint.Spec.MintInfo.Description = "Runs in TEE on Bitcoin mainnet"
+	mint.Spec.MintInfo.DescriptionLong = "Longer TEE mainnet description"
+	mint.Spec.MintInfo.MOTD = "Welcome"
+
+	dep, _ := GenerateDeployment(mint, "h", scheme)
+	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
+	envMap := envVarMap(mintd.Env)
+
+	if envMap["CDK_MINTD_MINT_NAME"] != "TEE Mainnet Mint" {
+		t.Errorf("CDK_MINTD_MINT_NAME = %q", envMap["CDK_MINTD_MINT_NAME"])
+	}
+	if envMap["CDK_MINTD_MINT_DESCRIPTION"] != "Runs in TEE on Bitcoin mainnet" {
+		t.Errorf("CDK_MINTD_MINT_DESCRIPTION = %q", envMap["CDK_MINTD_MINT_DESCRIPTION"])
+	}
+	if envMap["CDK_MINTD_MINT_DESCRIPTION_LONG"] != "Longer TEE mainnet description" {
+		t.Errorf("CDK_MINTD_MINT_DESCRIPTION_LONG = %q", envMap["CDK_MINTD_MINT_DESCRIPTION_LONG"])
+	}
+	if envMap["CDK_MINTD_MINT_MOTD"] != "Welcome" {
+		t.Errorf("CDK_MINTD_MINT_MOTD = %q", envMap["CDK_MINTD_MINT_MOTD"])
+	}
+}
+
 func TestGenerateDeployment_PostgresURLSecretRefNotExportedAsEnv(t *testing.T) {
 	scheme := testScheme(t)
 	mint := baseMint("pg-env")

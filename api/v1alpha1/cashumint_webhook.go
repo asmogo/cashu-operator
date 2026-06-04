@@ -501,6 +501,14 @@ func (r *CashuMint) validateCashuMint() error {
 		allErrs = append(allErrs, err)
 	}
 
+	if err := r.validateOnChain(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	if err := r.validateTEE(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
 	if len(allErrs) > 0 {
 		return fmt.Errorf("validation failed: %v", allErrs)
 	}
@@ -657,8 +665,8 @@ func (r *CashuMint) validatePaymentBackend() error {
 		count++
 	}
 
-	if count == 0 {
-		errs = append(errs, fmt.Errorf("spec.paymentBackend: exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor)"))
+	if count == 0 && !r.onChainEnabled() {
+		errs = append(errs, fmt.Errorf("spec.paymentBackend: exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor), or spec.onChain must be configured"))
 	}
 	if count > 1 {
 		errs = append(errs, fmt.Errorf("spec.paymentBackend: only one backend may be specified, but %d were found", count))
@@ -869,3 +877,56 @@ func (r *CashuMint) validateOrchardAI(orchard *OrchardConfig) []error {
 	}
 	return nil
 }
+
+func (r *CashuMint) onChainEnabled() bool {
+	return r.Spec.OnChain != nil && r.Spec.OnChain.Backend != ""
+}
+
+func (r *CashuMint) validateOnChain() error {
+	if !r.onChainEnabled() {
+		return nil
+	}
+	var errs []error
+	oc := r.Spec.OnChain
+	if oc.Backend == OnChainBackendBDK {
+		if oc.BDK == nil {
+			errs = append(errs, fmt.Errorf("spec.onChain.bdk is required when onChain.backend is bdk"))
+		} else {
+			if oc.BDK.Network == "" {
+				errs = append(errs, fmt.Errorf("spec.onChain.bdk.network is required"))
+			}
+			if oc.BDK.ChainSourceType == "esplora" && oc.BDK.EsploraURL == "" {
+				errs = append(errs, fmt.Errorf("spec.onChain.bdk.esploraUrl is required when chainSourceType is esplora"))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("onChain validation errors: %v", errs)
+	}
+	return nil
+}
+
+func (r *CashuMint) validateTEE() error {
+	if r.Spec.TEE == nil || !r.Spec.TEE.Enabled {
+		return nil
+	}
+
+	var errs []error
+
+	if r.Spec.TEE.KBS == nil {
+		errs = append(errs, fmt.Errorf("spec.tee.kbs is required when TEE is enabled"))
+	} else if r.Spec.TEE.KBS.URL == "" {
+		errs = append(errs, fmt.Errorf("spec.tee.kbs.url is required when TEE is enabled"))
+	}
+
+	if r.Spec.TEE.SealedSecret == "" {
+		errs = append(errs, fmt.Errorf("spec.tee.sealedSecret is required when TEE is enabled"))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("TEE validation errors: %v", errs)
+	}
+
+	return nil
+}
+

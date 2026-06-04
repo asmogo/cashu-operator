@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tee-mint-config
+  namespace: default
+  labels:
+    app.kubernetes.io/component: config
+    app.kubernetes.io/instance: tee-mint
+    app.kubernetes.io/managed-by: cashu-operator
+    app.kubernetes.io/name: cashu-mint
+data:
+  config.toml: |
+    [info]
+    url = "https://${domain}"
+    listen_host = "0.0.0.0"
+    listen_port = 8085
+
+    [info.logging]
+    output = "stderr"
+    console_level = "info"
+
+    [mint_info]
+    name = "${mint_name}"
+    description = "${mint_description}"
+
+    [database]
+    engine = "sqlite"
+
+    [ln]
+    ln_backend = "none"
+
+    [onchain]
+    onchain_backend = "bdk"
+
+    [bdk]
+    network = "${bdk_network}"
+    num_confs = ${bdk_num_confs}
+    chain_source_type = "esplora"
+    esplora_url = "${bdk_esplora_url}"
+    esplora_parallel_requests = 1
+    min_receive_amount_sat = 1000
+    min_send_amount_sat = 546

@@ -72,6 +72,7 @@ func generateConfigToml(mint *mintv1alpha1.CashuMint, dbPassword string) string 
 	writeMintInfoSection(&buf, mint)
 	writeDatabaseSection(&buf, mint, dbPassword)
 	writePaymentBackendSection(&buf, mint)
+	writeOnChainSection(&buf, mint)
 	writeLDKNodeSection(&buf, mint)
 	writeAuthSection(&buf, mint)
 	writeManagementRPCSection(&buf, mint)
@@ -247,6 +248,10 @@ func writeDatabaseSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint, dbPas
 
 func writePaymentBackendSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	backend := mint.Spec.PaymentBackend.ActiveBackend()
+	// On-chain-only mint: no Lightning backend, so CDK requires ln_backend="none".
+	if backend == "" && mintv1alpha1.OnChainEnabled(&mint.Spec) {
+		backend = mintv1alpha1.LNBackendValueNone
+	}
 	buf.WriteString("\n[ln]\n")
 	fmt.Fprintf(buf, "ln_backend = %q\n", backend)
 	if mint.Spec.PaymentBackend.MinMint != nil {
@@ -273,6 +278,47 @@ func writePaymentBackendSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint)
 		writeFakeWalletSection(buf, mint)
 	case mintv1alpha1.PaymentBackendGRPCProcessor:
 		writeGRPCProcessorSection(buf, mint)
+	}
+}
+
+// writeOnChainSection renders the [onchain] and [bdk] config sections.
+func writeOnChainSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
+	if !mintv1alpha1.OnChainEnabled(&mint.Spec) {
+		return
+	}
+	oc := mint.Spec.OnChain
+	buf.WriteString("\n[onchain]\n")
+	fmt.Fprintf(buf, "onchain_backend = %q\n", oc.Backend)
+
+	if oc.Backend != mintv1alpha1.OnChainBackendBDK || oc.BDK == nil {
+		return
+	}
+	bdk := oc.BDK
+	buf.WriteString("\n[bdk]\n")
+	fmt.Fprintf(buf, "network = %q\n", bdk.Network)
+	chainSource := bdk.ChainSourceType
+	if chainSource == "" {
+		chainSource = "esplora"
+	}
+	fmt.Fprintf(buf, "chain_source_type = %q\n", chainSource)
+	if bdk.EsploraURL != "" {
+		fmt.Fprintf(buf, "esplora_url = %q\n", bdk.EsploraURL)
+	}
+	parallel := int32(1)
+	if bdk.EsploraParallelRequests != nil {
+		parallel = *bdk.EsploraParallelRequests
+	}
+	fmt.Fprintf(buf, "esplora_parallel_requests = %d\n", parallel)
+	numConfs := int32(2)
+	if bdk.NumConfs != nil {
+		numConfs = *bdk.NumConfs
+	}
+	fmt.Fprintf(buf, "num_confs = %d\n", numConfs)
+	if bdk.MinReceiveAmountSat != nil {
+		fmt.Fprintf(buf, "min_receive_amount_sat = %d\n", *bdk.MinReceiveAmountSat)
+	}
+	if bdk.MinSendAmountSat != nil {
+		fmt.Fprintf(buf, "min_send_amount_sat = %d\n", *bdk.MinSendAmountSat)
 	}
 }
 

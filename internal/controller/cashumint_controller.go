@@ -236,7 +236,20 @@ func (r *CashuMintReconciler) transitionReconciliationPhase(cashuMint *mintv1alp
 // reconcileOptionalMnemonic ensures a BIP39 mnemonic Secret exists when
 // spec.mintInfo.autoGenerateMnemonic is true and no mnemonicSecretRef is set.
 // The secret is created once and never overwritten so the mint key is stable.
+// Skipped when TEE is enabled (mnemonic is delivered via sealed-secret reference).
 func (r *CashuMintReconciler) reconcileOptionalMnemonic(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
+	if mintv1alpha1.TEEEnabled(&cashuMint.Spec) {
+		return nil
+	}
+	if !cashuMint.Spec.MintInfo.AutoGenerateMnemonic || cashuMint.Spec.MintInfo.MnemonicSecretRef != nil {
+		return nil
+	}
+	if !cashuMint.Spec.MintInfo.AutoGenerateMnemonic || cashuMint.Spec.MintInfo.MnemonicSecretRef != nil {
+		return nil
+	}
+	if !cashuMint.Spec.MintInfo.AutoGenerateMnemonic || cashuMint.Spec.MintInfo.MnemonicSecretRef != nil {
+		return nil
+	}
 	if !cashuMint.Spec.MintInfo.AutoGenerateMnemonic || cashuMint.Spec.MintInfo.MnemonicSecretRef != nil {
 		return nil
 	}
