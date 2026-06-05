@@ -36,6 +36,7 @@ const (
 	DefaultClusterIssuerKind    = "ClusterIssuer"
 	DefaultIngressClassName     = "nginx"
 	DefaultMintImage            = "cashubtc/mintd:0.16"
+	DefaultSeedInitImage        = "ghcr.io/asmogo/cashu-seed-init:latest"
 	DefaultOrchardSQLiteImage   = "ghcr.io/cashubtc/orchard-mintdb-sqlite:1.8.1"
 	DefaultOrchardPostgresImage = "ghcr.io/cashubtc/orchard-mintdb-postgres:1.8.1"
 )
@@ -67,6 +68,10 @@ func TEEEnabled(spec *CashuMintSpec) bool {
 	return spec != nil && spec.TEE != nil && spec.TEE.Enabled
 }
 
+func EncryptedPVCKeyManagementEnabled(spec *CashuMintSpec) bool {
+	return spec != nil && spec.KeyManagement != nil && spec.KeyManagement.Mode == KeyManagementModeEncryptedPVC
+}
+
 // OnChainEnabled reports whether an on-chain backend is configured.
 func OnChainEnabled(spec *CashuMintSpec) bool {
 	return spec != nil && spec.OnChain != nil && spec.OnChain.Backend != ""
@@ -82,6 +87,18 @@ const (
 // LNBackendValueNone is the value used for CDK_MINTD_LN_BACKEND when no
 // Lightning backend is configured (on-chain-only mint).
 const LNBackendValueNone = "none"
+
+// Key management mode values.
+const (
+	KeyManagementModeEncryptedPVC = "encryptedPVC"
+)
+
+// Seed provider values.
+const (
+	SeedProviderLocal        = "local"
+	SeedProviderVaultTransit = "vaultTransit"
+	SeedProviderGoogleKMS    = "googleKMS"
+)
 
 // Payment backend values
 const (
@@ -252,6 +269,141 @@ type CashuMintSpec struct {
 	// reference string directly as env var values.
 	// +optional
 	TEE *TEEConfig `json:"tee,omitempty"`
+
+	// KeyManagement specifies how mint seed material is provisioned.
+	// encryptedPVC mode uses an init container to generate or unwrap the seed
+	// inside the pod, store it encrypted on the data PVC, and render a final
+	// config.toml for cdk-mintd. No Kubernetes Secret contains the mnemonic.
+	// +optional
+	KeyManagement *KeyManagementConfig `json:"keyManagement,omitempty"`
+}
+
+// KeyManagementConfig specifies provider-agnostic seed handling for the mint.
+type KeyManagementConfig struct {
+	// Mode selects the seed management strategy.
+	// +kubebuilder:validation:Enum=encryptedPVC
+	Mode string `json:"mode"`
+
+	// EncryptedPVC configures encrypted seed material stored on the mint data PVC.
+	// +optional
+	EncryptedPVC *EncryptedPVCKeyManagementConfig `json:"encryptedPVC,omitempty"`
+}
+
+// EncryptedPVCKeyManagementConfig configures the seed-init init container.
+type EncryptedPVCKeyManagementConfig struct {
+	// InitImage is the seed-init image used by the init container.
+	// +kubebuilder:default="ghcr.io/asmogo/cashu-seed-init:latest"
+	// +optional
+	InitImage string `json:"initImage,omitempty"`
+
+	// SeedPath is the encrypted seed envelope path on the data PVC.
+	// +kubebuilder:default="/data/seed.enc"
+	// +optional
+	SeedPath string `json:"seedPath,omitempty"`
+
+	// BaseConfigPath is where the operator-provided non-secret config template is mounted.
+	// +kubebuilder:default="/config/base.toml"
+	// +optional
+	BaseConfigPath string `json:"baseConfigPath,omitempty"`
+
+	// OutputConfigPath is where seed-init writes the final cdk-mintd config.
+	// +kubebuilder:default="/data/config.toml"
+	// +optional
+	OutputConfigPath string `json:"outputConfigPath,omitempty"`
+
+	// ServiceAccountName sets the pod service account used by provider auth.
+	// The operator does not create this account; configure it separately when needed.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// Provider configures how the seed data-encryption key is wrapped/unwrapped.
+	Provider SeedProviderConfig `json:"provider"`
+}
+
+// SeedProviderConfig configures a wrapping-key provider for seed-init.
+type SeedProviderConfig struct {
+	// Type selects the provider implementation.
+	// +kubebuilder:validation:Enum=local;vaultTransit;googleKMS
+	Type string `json:"type"`
+
+	// Local configures a development/test local wrapping key provider.
+	// +optional
+	Local *LocalSeedProviderConfig `json:"local,omitempty"`
+
+	// VaultTransit configures HashiCorp Vault Transit as a cloud-agnostic provider.
+	// +optional
+	VaultTransit *VaultTransitSeedProviderConfig `json:"vaultTransit,omitempty"`
+
+	// GoogleKMS configures Google Cloud KMS wrapping.
+	// +optional
+	GoogleKMS *GoogleKMSSeedProviderConfig `json:"googleKMS,omitempty"`
+}
+
+// GoogleKMSSeedProviderConfig configures Google Cloud KMS wrapping.
+type GoogleKMSSeedProviderConfig struct {
+	// KeyName is the full Cloud KMS CryptoKey resource name, for example
+	// projects/<project>/locations/<location>/keyRings/<ring>/cryptoKeys/<key>.
+	KeyName string `json:"keyName"`
+
+	// Endpoint overrides the Cloud KMS API endpoint.
+	// +kubebuilder:default="https://cloudkms.googleapis.com"
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+}
+
+// LocalSeedProviderConfig configures a static wrapping key for development/test use.
+type LocalSeedProviderConfig struct {
+	// KeySecretRef references a base64-encoded 32-byte wrapping key.
+	KeySecretRef corev1.SecretKeySelector `json:"keySecretRef"`
+}
+
+// VaultTransitSeedProviderConfig configures HashiCorp Vault Transit wrapping.
+type VaultTransitSeedProviderConfig struct {
+	// Address is the Vault base URL, for example https://vault.example.com.
+	// +kubebuilder:validation:Pattern=`^https?://.*`
+	Address string `json:"address"`
+
+	// Mount is the Vault transit mount path.
+	// +kubebuilder:default="transit"
+	// +optional
+	Mount string `json:"mount,omitempty"`
+
+	// KeyName is the Vault transit key used to wrap the seed data-encryption key.
+	KeyName string `json:"keyName"`
+
+	// Auth configures Vault authentication for seed-init.
+	Auth VaultAuthConfig `json:"auth"`
+}
+
+// VaultAuthConfig configures Vault authentication.
+type VaultAuthConfig struct {
+	// Method is the Vault auth method used by seed-init.
+	// +kubebuilder:validation:Enum=kubernetes;token
+	Method string `json:"method"`
+
+	// Kubernetes configures Vault Kubernetes auth.
+	// +optional
+	Kubernetes *VaultKubernetesAuthConfig `json:"kubernetes,omitempty"`
+
+	// TokenSecretRef references a Vault token for token auth.
+	// +optional
+	TokenSecretRef *corev1.SecretKeySelector `json:"tokenSecretRef,omitempty"`
+}
+
+// VaultKubernetesAuthConfig configures Vault Kubernetes auth.
+type VaultKubernetesAuthConfig struct {
+	// Mount is the Vault Kubernetes auth mount path.
+	// +kubebuilder:default="kubernetes"
+	// +optional
+	Mount string `json:"mount,omitempty"`
+
+	// Role is the Vault Kubernetes auth role.
+	Role string `json:"role"`
+
+	// TokenPath is the projected service account token path.
+	// +kubebuilder:default="/var/run/secrets/kubernetes.io/serviceaccount/token"
+	// +optional
+	TokenPath string `json:"tokenPath,omitempty"`
 }
 
 // TEEConfig specifies Trusted Execution Environment configuration for

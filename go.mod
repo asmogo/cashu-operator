@@ -3,6 +3,7 @@ module github.com/asmogo/cashu-operator
 go 1.24.5
 
 require (
+	github.com/cashubtc/cdk-go v0.17.0-rc.3
 	github.com/cert-manager/cert-manager v1.14.4
 	github.com/onsi/ginkgo/v2 v2.22.0
 	github.com/onsi/gomega v1.36.1

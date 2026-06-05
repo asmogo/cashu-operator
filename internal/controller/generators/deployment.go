@@ -139,6 +139,7 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 	}
 	podSpec := corev1.PodSpec{
 		Containers:       containers,
+		InitContainers:   generateInitContainers(mint),
 		Volumes:          volumes,
 		ImagePullSecrets: mint.Spec.ImagePullSecrets,
 		NodeSelector:     mint.Spec.NodeSelector,
@@ -147,8 +148,128 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 		SecurityContext:  getPodSecurityContext(mint),
 		RuntimeClassName: mint.Spec.RuntimeClassName,
 	}
+	if mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) && mint.Spec.KeyManagement.EncryptedPVC.ServiceAccountName != "" {
+		podSpec.ServiceAccountName = mint.Spec.KeyManagement.EncryptedPVC.ServiceAccountName
+	}
 
 	return podSpec
+}
+
+func generateInitContainers(mint *mintv1alpha1.CashuMint) []corev1.Container {
+	if !mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) {
+		return nil
+	}
+	return []corev1.Container{generateSeedInitContainer(mint)}
+}
+
+func generateSeedInitContainer(mint *mintv1alpha1.CashuMint) corev1.Container {
+	cfg := encryptedPVCConfig(mint)
+	image := cfg.InitImage
+	if image == "" {
+		image = mintv1alpha1.DefaultSeedInitImage
+	}
+	env := seedInitEnvVars(mint, cfg)
+	return corev1.Container{
+		Name:            "seed-init",
+		Image:           image,
+		ImagePullPolicy: corev1.PullIfNotPresent,
+		Env:             env,
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "data", MountPath: "/data"},
+			{Name: "config", MountPath: cfg.BaseConfigPath, SubPath: "config.toml", ReadOnly: true},
+		},
+		SecurityContext: &corev1.SecurityContext{
+			AllowPrivilegeEscalation: boolPtr(false),
+			RunAsNonRoot:             boolPtr(true),
+			ReadOnlyRootFilesystem:   boolPtr(true),
+			Capabilities: &corev1.Capabilities{
+				Drop: []corev1.Capability{"ALL"},
+			},
+		},
+	}
+}
+
+func encryptedPVCConfig(mint *mintv1alpha1.CashuMint) *mintv1alpha1.EncryptedPVCKeyManagementConfig {
+	return mint.Spec.KeyManagement.EncryptedPVC
+}
+
+func seedInitEnvVars(mint *mintv1alpha1.CashuMint, cfg *mintv1alpha1.EncryptedPVCKeyManagementConfig) []corev1.EnvVar {
+	seedPath := cfg.SeedPath
+	if seedPath == "" {
+		seedPath = "/data/seed.enc"
+	}
+	baseConfigPath := cfg.BaseConfigPath
+	if baseConfigPath == "" {
+		baseConfigPath = "/config/base.toml"
+	}
+	outputConfigPath := cfg.OutputConfigPath
+	if outputConfigPath == "" {
+		outputConfigPath = "/data/config.toml"
+	}
+	env := []corev1.EnvVar{
+		{Name: "SEED_INIT_PROVIDER", Value: cfg.Provider.Type},
+		{Name: "SEED_INIT_SEED_PATH", Value: seedPath},
+		{Name: "SEED_INIT_BASE_CONFIG_PATH", Value: baseConfigPath},
+		{Name: "SEED_INIT_OUTPUT_CONFIG_PATH", Value: outputConfigPath},
+		{Name: "SEED_INIT_AAD", Value: mint.Namespace + "/" + mint.Name},
+		{Name: "SEED_INIT_WRITE_BDK_MNEMONIC", Value: fmt.Sprintf("%t", mintv1alpha1.OnChainEnabled(&mint.Spec) && mint.Spec.OnChain.Backend == mintv1alpha1.OnChainBackendBDK)},
+	}
+	switch cfg.Provider.Type {
+	case mintv1alpha1.SeedProviderLocal:
+		if cfg.Provider.Local != nil {
+			env = append(env, corev1.EnvVar{
+				Name: "SEED_INIT_LOCAL_KEY_B64",
+				ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: cfg.Provider.Local.KeySecretRef.LocalObjectReference,
+					Key:                  cfg.Provider.Local.KeySecretRef.Key,
+				}},
+			})
+		}
+	case mintv1alpha1.SeedProviderVaultTransit:
+		if cfg.Provider.VaultTransit != nil {
+			vt := cfg.Provider.VaultTransit
+			mount := vt.Mount
+			if mount == "" {
+				mount = "transit"
+			}
+			env = append(env,
+				corev1.EnvVar{Name: "VAULT_ADDR", Value: vt.Address},
+				corev1.EnvVar{Name: "VAULT_TRANSIT_MOUNT", Value: mount},
+				corev1.EnvVar{Name: "VAULT_TRANSIT_KEY", Value: vt.KeyName},
+				corev1.EnvVar{Name: "VAULT_AUTH_METHOD", Value: vt.Auth.Method},
+			)
+			if vt.Auth.Method == "token" && vt.Auth.TokenSecretRef != nil {
+				env = append(env, corev1.EnvVar{
+					Name:      "VAULT_TOKEN",
+					ValueFrom: &corev1.EnvVarSource{SecretKeyRef: vt.Auth.TokenSecretRef},
+				})
+			}
+			if vt.Auth.Method == "kubernetes" && vt.Auth.Kubernetes != nil {
+				kube := vt.Auth.Kubernetes
+				authMount := kube.Mount
+				if authMount == "" {
+					authMount = "kubernetes"
+				}
+				tokenPath := kube.TokenPath
+				if tokenPath == "" {
+					tokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+				}
+				env = append(env,
+					corev1.EnvVar{Name: "VAULT_K8S_AUTH_MOUNT", Value: authMount},
+					corev1.EnvVar{Name: "VAULT_K8S_AUTH_ROLE", Value: kube.Role},
+					corev1.EnvVar{Name: "VAULT_K8S_JWT_PATH", Value: tokenPath},
+				)
+			}
+		}
+	case mintv1alpha1.SeedProviderGoogleKMS:
+		if cfg.Provider.GoogleKMS != nil {
+			env = append(env, corev1.EnvVar{Name: "GOOGLE_KMS_KEY_NAME", Value: cfg.Provider.GoogleKMS.KeyName})
+			if cfg.Provider.GoogleKMS.Endpoint != "" {
+				env = append(env, corev1.EnvVar{Name: "GOOGLE_KMS_ENDPOINT", Value: cfg.Provider.GoogleKMS.Endpoint})
+			}
+		}
+	}
+	return env
 }
 
 // generateMintContainer creates the main mint container
@@ -345,6 +466,12 @@ func generateSidecarProcessorContainer(mint *mintv1alpha1.CashuMint) corev1.Cont
 // Required configuration must still be present in config.toml; env vars here
 // must not be used as a fallback for TOML fields that CDK validates while parsing.
 func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) {
+		return []corev1.EnvVar{
+			{Name: "CDK_MINTD_WORK_DIR", Value: "/data"},
+			{Name: "HOME", Value: "/data"},
+		}
+	}
 	envVars := mintCoreEnvVars(mint)
 	envVars = append(envVars, mintInfoEnvVars(mint)...)
 	envVars = append(envVars, mintLoggingEnvVars(mint)...)
@@ -426,6 +553,9 @@ func mintLoggingEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 // mintMnemonicEnvVars injects CDK_MINTD_MNEMONIC from either a user-supplied
 // SecretKeySelector or the operator-managed auto-generated secret.
 func mintMnemonicEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
+	if mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) {
+		return nil
+	}
 	// TEE mode: inject the sealed-secret reference directly as the env value.
 	// CDH unseals it inside the TEE after attestation; no Kubernetes Secret.
 	if mintv1alpha1.TEEEnabled(&mint.Spec) && mint.Spec.TEE.SealedSecret != "" {
@@ -551,6 +681,11 @@ func mintOnChainEnvVars(mint *mintv1alpha1.CashuMint) []corev1.EnvVar {
 	if !mintv1alpha1.OnChainEnabled(&mint.Spec) {
 		return nil
 	}
+	if mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) {
+		// seed-init renders the complete [onchain]/[bdk] config, including the
+		// mnemonic. Avoid partial env overlays that would drop bdk.mnemonic.
+		return nil
+	}
 	oc := mint.Spec.OnChain
 	vars := []corev1.EnvVar{{Name: "CDK_MINTD_ONCHAIN_BACKEND", Value: oc.Backend}}
 	if oc.Backend != mintv1alpha1.OnChainBackendBDK || oc.BDK == nil {
@@ -648,13 +783,15 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 			Name:      "data",
 			MountPath: "/data",
 		},
-		{
+	}
+	if !mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) {
+		mounts = append(mounts, corev1.VolumeMount{
 			// Mount config.toml into the work dir so CDK finds it at $CDK_MINTD_WORK_DIR/config.toml
 			Name:      "config",
 			MountPath: "/data/config.toml",
 			SubPath:   "config.toml",
 			ReadOnly:  true,
-		},
+		})
 	}
 
 	backend := mint.Spec.PaymentBackend.ActiveBackend()

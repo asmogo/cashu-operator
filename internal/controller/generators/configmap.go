@@ -254,18 +254,10 @@ func writePaymentBackendSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint)
 	}
 	buf.WriteString("\n[ln]\n")
 	fmt.Fprintf(buf, "ln_backend = %q\n", backend)
-	if mint.Spec.PaymentBackend.MinMint != nil {
-		fmt.Fprintf(buf, "min_mint = %d\n", *mint.Spec.PaymentBackend.MinMint)
-	}
-	if mint.Spec.PaymentBackend.MaxMint != nil {
-		fmt.Fprintf(buf, "max_mint = %d\n", *mint.Spec.PaymentBackend.MaxMint)
-	}
-	if mint.Spec.PaymentBackend.MinMelt != nil {
-		fmt.Fprintf(buf, "min_melt = %d\n", *mint.Spec.PaymentBackend.MinMelt)
-	}
-	if mint.Spec.PaymentBackend.MaxMelt != nil {
-		fmt.Fprintf(buf, "max_melt = %d\n", *mint.Spec.PaymentBackend.MaxMelt)
-	}
+	fmt.Fprintf(buf, "min_mint = %d\n", int64Value(mint.Spec.PaymentBackend.MinMint, 1))
+	fmt.Fprintf(buf, "max_mint = %d\n", int64Value(mint.Spec.PaymentBackend.MaxMint, 500000))
+	fmt.Fprintf(buf, "min_melt = %d\n", int64Value(mint.Spec.PaymentBackend.MinMelt, 1))
+	fmt.Fprintf(buf, "max_melt = %d\n", int64Value(mint.Spec.PaymentBackend.MaxMelt, 500000))
 
 	switch backend {
 	case mintv1alpha1.PaymentBackendLND:
@@ -289,6 +281,10 @@ func writeOnChainSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	oc := mint.Spec.OnChain
 	buf.WriteString("\n[onchain]\n")
 	fmt.Fprintf(buf, "onchain_backend = %q\n", oc.Backend)
+	fmt.Fprintf(buf, "min_mint = %d\n", int64Value(mint.Spec.PaymentBackend.MinMint, 1))
+	fmt.Fprintf(buf, "max_mint = %d\n", int64Value(mint.Spec.PaymentBackend.MaxMint, 500000))
+	fmt.Fprintf(buf, "min_melt = %d\n", int64Value(mint.Spec.PaymentBackend.MinMelt, 1))
+	fmt.Fprintf(buf, "max_melt = %d\n", int64Value(mint.Spec.PaymentBackend.MaxMelt, 500000))
 
 	if oc.Backend != mintv1alpha1.OnChainBackendBDK || oc.BDK == nil {
 		return
@@ -320,6 +316,13 @@ func writeOnChainSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {
 	if bdk.MinSendAmountSat != nil {
 		fmt.Fprintf(buf, "min_send_amount_sat = %d\n", *bdk.MinSendAmountSat)
 	}
+}
+
+func int64Value(value *int64, fallback int64) int64 {
+	if value == nil {
+		return fallback
+	}
+	return *value
 }
 
 func writeLNDSection(buf *bytes.Buffer, mint *mintv1alpha1.CashuMint) {

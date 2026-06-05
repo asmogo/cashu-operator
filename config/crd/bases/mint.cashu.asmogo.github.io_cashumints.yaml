@@ -1848,6 +1848,197 @@ spec:
                 - enabled
                 - host
                 type: object
+              keyManagement:
+                description: |-
+                  KeyManagement specifies how mint seed material is provisioned.
+                  encryptedPVC mode uses an init container to generate or unwrap the seed
+                  inside the pod, store it encrypted on the data PVC, and render a final
+                  config.toml for cdk-mintd. No Kubernetes Secret contains the mnemonic.
+                properties:
+                  encryptedPVC:
+                    description: EncryptedPVC configures encrypted seed material stored
+                      on the mint data PVC.
+                    properties:
+                      baseConfigPath:
+                        default: /config/base.toml
+                        description: BaseConfigPath is where the operator-provided
+                          non-secret config template is mounted.
+                        type: string
+                      initImage:
+                        default: ghcr.io/asmogo/cashu-seed-init:latest
+                        description: InitImage is the seed-init image used by the
+                          init container.
+                        type: string
+                      outputConfigPath:
+                        default: /data/config.toml
+                        description: OutputConfigPath is where seed-init writes the
+                          final cdk-mintd config.
+                        type: string
+                      provider:
+                        description: Provider configures how the seed data-encryption
+                          key is wrapped/unwrapped.
+                        properties:
+                          googleKMS:
+                            description: GoogleKMS configures Google Cloud KMS wrapping.
+                            properties:
+                              endpoint:
+                                default: https://cloudkms.googleapis.com
+                                description: Endpoint overrides the Cloud KMS API
+                                  endpoint.
+                                type: string
+                              keyName:
+                                description: |-
+                                  KeyName is the full Cloud KMS CryptoKey resource name, for example
+                                  projects/<project>/locations/<location>/keyRings/<ring>/cryptoKeys/<key>.
+                                type: string
+                            required:
+                            - keyName
+                            type: object
+                          local:
+                            description: Local configures a development/test local
+                              wrapping key provider.
+                            properties:
+                              keySecretRef:
+                                description: KeySecretRef references a base64-encoded
+                                  32-byte wrapping key.
+                                properties:
+                                  key:
+                                    description: The key of the secret to select from.  Must
+                                      be a valid secret key.
+                                    type: string
+                                  name:
+                                    default: ""
+                                    description: |-
+                                      Name of the referent.
+                                      This field is effectively required, but due to backwards compatibility is
+                                      allowed to be empty. Instances of this type with an empty value here are
+                                      almost certainly wrong.
+                                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                    type: string
+                                  optional:
+                                    description: Specify whether the Secret or its
+                                      key must be defined
+                                    type: boolean
+                                required:
+                                - key
+                                type: object
+                                x-kubernetes-map-type: atomic
+                            required:
+                            - keySecretRef
+                            type: object
+                          type:
+                            description: Type selects the provider implementation.
+                            enum:
+                            - local
+                            - vaultTransit
+                            - googleKMS
+                            type: string
+                          vaultTransit:
+                            description: VaultTransit configures HashiCorp Vault Transit
+                              as a cloud-agnostic provider.
+                            properties:
+                              address:
+                                description: Address is the Vault base URL, for example
+                                  https://vault.example.com.
+                                pattern: ^https?://.*
+                                type: string
+                              auth:
+                                description: Auth configures Vault authentication
+                                  for seed-init.
+                                properties:
+                                  kubernetes:
+                                    description: Kubernetes configures Vault Kubernetes
+                                      auth.
+                                    properties:
+                                      mount:
+                                        default: kubernetes
+                                        description: Mount is the Vault Kubernetes
+                                          auth mount path.
+                                        type: string
+                                      role:
+                                        description: Role is the Vault Kubernetes
+                                          auth role.
+                                        type: string
+                                      tokenPath:
+                                        default: /var/run/secrets/kubernetes.io/serviceaccount/token
+                                        description: TokenPath is the projected service
+                                          account token path.
+                                        type: string
+                                    required:
+                                    - role
+                                    type: object
+                                  method:
+                                    description: Method is the Vault auth method used
+                                      by seed-init.
+                                    enum:
+                                    - kubernetes
+                                    - token
+                                    type: string
+                                  tokenSecretRef:
+                                    description: TokenSecretRef references a Vault
+                                      token for token auth.
+                                    properties:
+                                      key:
+                                        description: The key of the secret to select
+                                          from.  Must be a valid secret key.
+                                        type: string
+                                      name:
+                                        default: ""
+                                        description: |-
+                                          Name of the referent.
+                                          This field is effectively required, but due to backwards compatibility is
+                                          allowed to be empty. Instances of this type with an empty value here are
+                                          almost certainly wrong.
+                                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                                        type: string
+                                      optional:
+                                        description: Specify whether the Secret or
+                                          its key must be defined
+                                        type: boolean
+                                    required:
+                                    - key
+                                    type: object
+                                    x-kubernetes-map-type: atomic
+                                required:
+                                - method
+                                type: object
+                              keyName:
+                                description: KeyName is the Vault transit key used
+                                  to wrap the seed data-encryption key.
+                                type: string
+                              mount:
+                                default: transit
+                                description: Mount is the Vault transit mount path.
+                                type: string
+                            required:
+                            - address
+                            - auth
+                            - keyName
+                            type: object
+                        required:
+                        - type
+                        type: object
+                      seedPath:
+                        default: /data/seed.enc
+                        description: SeedPath is the encrypted seed envelope path
+                          on the data PVC.
+                        type: string
+                      serviceAccountName:
+                        description: |-
+                          ServiceAccountName sets the pod service account used by provider auth.
+                          The operator does not create this account; configure it separately when needed.
+                        type: string
+                    required:
+                    - provider
+                    type: object
+                  mode:
+                    description: Mode selects the seed management strategy.
+                    enum:
+                    - encryptedPVC
+                    type: string
+                required:
+                - mode
+                type: object
               ldkNode:
                 description: LDKNode specifies optional LDK node configuration
                 properties:

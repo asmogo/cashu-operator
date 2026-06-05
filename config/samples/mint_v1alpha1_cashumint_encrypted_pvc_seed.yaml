@@ -1,0 +1,77 @@
+# Provider-agnostic encrypted PVC seed handling.
+#
+# In this mode the operator does not create a Kubernetes mnemonic Secret. Instead,
+# a seed-init initContainer generates or unwraps the BIP39 mnemonic inside the pod,
+# stores only an encrypted seed envelope on the data PVC, and writes the final
+# /data/config.toml that cdk-mintd reads at startup.
+#
+# This sample uses Vault Transit. To use Google KMS instead, replace provider with:
+# provider:
+#   type: googleKMS
+#   googleKMS:
+#     keyName: projects/my-project/locations/global/keyRings/cashu/cryptoKeys/mint-seeds
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: encrypted-pvc-mint
+  namespace: default
+---
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: encrypted-pvc-mint
+spec:
+  image: cashubtc/mintd-noshell:0.17.0-rc.0
+  replicas: 1
+  mintInfo:
+    url: https://encrypted-pvc-mint.example.test
+    listenHost: 0.0.0.0
+    listenPort: 8085
+    name: Encrypted PVC Seed Mint
+    description: Mint seed is generated in-pod and stored encrypted on the PVC
+    autoGenerateMnemonic: false
+
+  keyManagement:
+    mode: encryptedPVC
+    encryptedPVC:
+      initImage: ghcr.io/asmogo/cashu-seed-init:latest
+      serviceAccountName: encrypted-pvc-mint
+      seedPath: /data/seed.enc
+      baseConfigPath: /config/base.toml
+      outputConfigPath: /data/config.toml
+      provider:
+        type: vaultTransit
+        vaultTransit:
+          address: https://vault.example.test
+          mount: transit
+          keyName: cashu-mints/encrypted-pvc-mint
+          auth:
+            method: kubernetes
+            kubernetes:
+              mount: kubernetes
+              role: cashu-mint-encrypted-pvc-mint
+
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  storage:
+    size: 5Gi
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+    capabilities:
+      drop:
+        - ALL

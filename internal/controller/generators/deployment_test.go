@@ -17,6 +17,7 @@ limitations under the License.
 package generators
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -285,6 +286,118 @@ func TestGenerateDeployment_PostgresURLSecretRefNotExportedAsEnv(t *testing.T) {
 		if e.Name == "CDK_MINTD_POSTGRES_URL" {
 			t.Fatal("CDK_MINTD_POSTGRES_URL should be rendered into config.toml, not exported as an env var")
 		}
+	}
+}
+
+func TestGenerateDeployment_EncryptedPVCKeyManagement(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("encrypted-pvc")
+	mint.Spec.MintInfo.AutoGenerateMnemonic = false
+	mint.Spec.KeyManagement = &mintv1alpha1.KeyManagementConfig{
+		Mode: mintv1alpha1.KeyManagementModeEncryptedPVC,
+		EncryptedPVC: &mintv1alpha1.EncryptedPVCKeyManagementConfig{
+			InitImage:          "seed-init:test",
+			SeedPath:           "/data/seed.enc",
+			BaseConfigPath:     "/config/base.toml",
+			OutputConfigPath:   "/data/config.toml",
+			ServiceAccountName: "mint-sa",
+			Provider: mintv1alpha1.SeedProviderConfig{
+				Type: mintv1alpha1.SeedProviderLocal,
+				Local: &mintv1alpha1.LocalSeedProviderConfig{
+					KeySecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "wrap-key"},
+						Key:                  "key",
+					},
+				},
+			},
+		},
+	}
+
+	dep, err := GenerateDeployment(mint, "h", scheme)
+	if err != nil {
+		t.Fatalf("GenerateDeployment() error = %v", err)
+	}
+	if dep.Spec.Template.Spec.ServiceAccountName != "mint-sa" {
+		t.Fatalf("serviceAccountName = %q, want mint-sa", dep.Spec.Template.Spec.ServiceAccountName)
+	}
+	if len(dep.Spec.Template.Spec.InitContainers) != 1 {
+		t.Fatalf("init containers = %d, want 1", len(dep.Spec.Template.Spec.InitContainers))
+	}
+	init := dep.Spec.Template.Spec.InitContainers[0]
+	if init.Name != "seed-init" || init.Image != "seed-init:test" {
+		t.Fatalf("unexpected init container: %#v", init)
+	}
+	env := envVarMap(init.Env)
+	if env["SEED_INIT_PROVIDER"] != mintv1alpha1.SeedProviderLocal {
+		t.Fatalf("SEED_INIT_PROVIDER = %q", env["SEED_INIT_PROVIDER"])
+	}
+	foundLocalKey := false
+	for _, e := range init.Env {
+		if e.Name == "SEED_INIT_LOCAL_KEY_B64" && e.ValueFrom != nil && e.ValueFrom.SecretKeyRef != nil && e.ValueFrom.SecretKeyRef.Name == "wrap-key" {
+			foundLocalKey = true
+		}
+	}
+	if !foundLocalKey {
+		t.Fatal("seed-init local wrapping key SecretKeyRef missing")
+	}
+	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
+	for _, e := range mintd.Env {
+		if e.Name == "CDK_MINTD_MNEMONIC" {
+			t.Fatal("mintd should not receive CDK_MINTD_MNEMONIC env var in encryptedPVC mode")
+		}
+	}
+	for _, m := range mintd.VolumeMounts {
+		if m.Name == "config" && m.MountPath == "/data/config.toml" {
+			t.Fatal("mintd should not mount config ConfigMap over /data/config.toml in encryptedPVC mode")
+		}
+	}
+}
+
+func TestGenerateDeployment_EncryptedPVCWithBDKDoesNotEmitBDKEnv(t *testing.T) {
+	scheme := testScheme(t)
+	mint := baseMint("encrypted-pvc-bdk")
+	mint.Spec.MintInfo.AutoGenerateMnemonic = false
+	mint.Spec.PaymentBackend = mintv1alpha1.PaymentBackendConfig{}
+	mint.Spec.OnChain = &mintv1alpha1.OnChainConfig{
+		Backend: mintv1alpha1.OnChainBackendBDK,
+		BDK: &mintv1alpha1.BDKConfig{
+			Network:         "signet",
+			ChainSourceType: "esplora",
+			EsploraURL:      "https://mutinynet.com/api",
+		},
+	}
+	mint.Spec.KeyManagement = &mintv1alpha1.KeyManagementConfig{
+		Mode: mintv1alpha1.KeyManagementModeEncryptedPVC,
+		EncryptedPVC: &mintv1alpha1.EncryptedPVCKeyManagementConfig{
+			Provider: mintv1alpha1.SeedProviderConfig{
+				Type: mintv1alpha1.SeedProviderLocal,
+				Local: &mintv1alpha1.LocalSeedProviderConfig{
+					KeySecretRef: corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{Name: "wrap-key"},
+						Key:                  "key",
+					},
+				},
+			},
+		},
+	}
+
+	dep, err := GenerateDeployment(mint, "h", scheme)
+	if err != nil {
+		t.Fatalf("GenerateDeployment() error = %v", err)
+	}
+	mintd := findContainer(dep.Spec.Template.Spec.Containers, "mintd")
+	for _, env := range mintd.Env {
+		if env.Name != "CDK_MINTD_WORK_DIR" && env.Name != "HOME" {
+			t.Fatalf("unexpected config env var in encryptedPVC mode: %s", env.Name)
+		}
+		if strings.HasPrefix(env.Name, "CDK_MINTD_BDK_") || env.Name == "CDK_MINTD_ONCHAIN_BACKEND" || env.Name == "CDK_MINTD_LN_BACKEND" {
+			t.Fatalf("unexpected backend env var in encryptedPVC mode: %s", env.Name)
+		}
+	}
+	init := dep.Spec.Template.Spec.InitContainers[0]
+	envMap := envVarMap(init.Env)
+	if envMap["SEED_INIT_WRITE_BDK_MNEMONIC"] != "true" {
+		t.Fatalf("SEED_INIT_WRITE_BDK_MNEMONIC = %q, want true", envMap["SEED_INIT_WRITE_BDK_MNEMONIC"])
 	}
 }
 

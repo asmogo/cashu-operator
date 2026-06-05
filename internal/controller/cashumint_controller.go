@@ -238,7 +238,7 @@ func (r *CashuMintReconciler) transitionReconciliationPhase(cashuMint *mintv1alp
 // The secret is created once and never overwritten so the mint key is stable.
 // Skipped when TEE is enabled (mnemonic is delivered via sealed-secret reference).
 func (r *CashuMintReconciler) reconcileOptionalMnemonic(ctx context.Context, cashuMint *mintv1alpha1.CashuMint) error {
-	if mintv1alpha1.TEEEnabled(&cashuMint.Spec) {
+	if mintv1alpha1.TEEEnabled(&cashuMint.Spec) || mintv1alpha1.EncryptedPVCKeyManagementEnabled(&cashuMint.Spec) {
 		return nil
 	}
 	if !cashuMint.Spec.MintInfo.AutoGenerateMnemonic || cashuMint.Spec.MintInfo.MnemonicSecretRef != nil {
