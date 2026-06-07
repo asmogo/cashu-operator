@@ -13,6 +13,12 @@ spec:
     environmentVariables:
     - name: INSTALL_OFFICIAL_CONTAINERD
       value: 'false'
+    - name: SHIMS
+      value: 'remote'
+    - name: DEFAULT_SHIM
+      value: 'remote'
+    - name: CREATE_RUNTIMECLASSES
+      value: 'true'
     installCmd:
     - /usr/bin/kata-deploy
     - install

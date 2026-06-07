@@ -148,7 +148,11 @@ func generatePodSpec(mint *mintv1alpha1.CashuMint) corev1.PodSpec {
 		SecurityContext:  getPodSecurityContext(mint),
 		RuntimeClassName: mint.Spec.RuntimeClassName,
 	}
-	if mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) && mint.Spec.KeyManagement.EncryptedPVC.ServiceAccountName != "" {
+	// Pod service account: top-level ServiceAccountName takes effect; the
+	// encryptedPVC-specific field is kept as a fallback for older specs.
+	if mint.Spec.ServiceAccountName != "" {
+		podSpec.ServiceAccountName = mint.Spec.ServiceAccountName
+	} else if mintv1alpha1.EncryptedPVCKeyManagementEnabled(&mint.Spec) && mint.Spec.KeyManagement.EncryptedPVC.ServiceAccountName != "" {
 		podSpec.ServiceAccountName = mint.Spec.KeyManagement.EncryptedPVC.ServiceAccountName
 	}
 
@@ -482,6 +486,9 @@ func generateEnvironmentVariables(mint *mintv1alpha1.CashuMint) []corev1.EnvVar 
 	envVars = append(envVars, mintOnChainEnvVars(mint)...)
 	envVars = append(envVars, mintLDKEnvVars(mint)...)
 	envVars = append(envVars, mintHTTPCacheEnvVars(mint)...)
+	// ExtraEnv is appended last so wrapper/attested-entrypoint images can be
+	// configured (e.g. CASHU_ATTESTATION_*) without provider-specific fields.
+	envVars = append(envVars, mint.Spec.ExtraEnv...)
 	return envVars
 }
 
@@ -835,6 +842,8 @@ func generateVolumeMounts(mint *mintv1alpha1.CashuMint) []corev1.VolumeMount {
 		})
 	}
 
+	mounts = append(mounts, mint.Spec.ExtraVolumeMounts...)
+
 	return mounts
 }
 
@@ -941,6 +950,8 @@ func generateVolumes(mint *mintv1alpha1.CashuMint) []corev1.Volume {
 			},
 		})
 	}
+
+	volumes = append(volumes, mint.Spec.ExtraVolumes...)
 
 	return volumes
 }
