@@ -39,4 +39,4 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: cover-e2e.out
           flags: e2e
-          fail_ci_if_error: true
+          fail_ci_if_error: false

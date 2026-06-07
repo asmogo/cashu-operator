@@ -376,7 +376,7 @@ func (p *googleKMSProvider) Wrap(ctx context.Context, plaintext []byte) (string,
 		return "", err
 	}
 	if response.Ciphertext == "" {
-		return "", errors.New("Google KMS encrypt returned empty ciphertext")
+		return "", errors.New("google KMS encrypt returned empty ciphertext")
 	}
 	return "googlekms:v1:" + response.Ciphertext, nil
 }
@@ -384,7 +384,7 @@ func (p *googleKMSProvider) Wrap(ctx context.Context, plaintext []byte) (string,
 func (p *googleKMSProvider) Unwrap(ctx context.Context, wrapped string) ([]byte, error) {
 	ciphertext := strings.TrimPrefix(wrapped, "googlekms:v1:")
 	if ciphertext == wrapped {
-		return nil, errors.New("Google KMS wrapped DEK has invalid prefix")
+		return nil, errors.New("google KMS wrapped DEK has invalid prefix")
 	}
 	body := map[string]string{"ciphertext": ciphertext}
 	var response struct {
@@ -394,7 +394,7 @@ func (p *googleKMSProvider) Unwrap(ctx context.Context, wrapped string) ([]byte,
 		return nil, err
 	}
 	if response.Plaintext == "" {
-		return nil, errors.New("Google KMS decrypt returned empty plaintext")
+		return nil, errors.New("google KMS decrypt returned empty plaintext")
 	}
 	return base64.StdEncoding.DecodeString(response.Plaintext)
 }
@@ -426,13 +426,23 @@ func (p *googleKMSProvider) doJSON(ctx context.Context, method, path string, bod
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("close Google KMS response body: %v", closeErr)
+		}
+	}()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Google KMS request %s %s failed: status=%d body=%s", method, path, resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return fmt.Errorf(
+			"google KMS request %s %s failed: status=%d body=%s",
+			method,
+			path,
+			resp.StatusCode,
+			strings.TrimSpace(string(respBody)),
+		)
 	}
 	if out != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, out); err != nil {
@@ -447,7 +457,8 @@ func googleAccessToken(ctx context.Context, client *http.Client) (string, error)
 		return token, nil
 	}
 	metadataHost := getenvDefault("GCE_METADATA_HOST", "metadata.google.internal")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+metadataHost+"/computeMetadata/v1/instance/service-accounts/default/token", nil)
+	metadataURL := "http://" + metadataHost + "/computeMetadata/v1/instance/service-accounts/default/token"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataURL, nil)
 	if err != nil {
 		return "", err
 	}
@@ -456,13 +467,21 @@ func googleAccessToken(ctx context.Context, client *http.Client) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("fetch Google metadata token: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("close Google metadata response body: %v", closeErr)
+		}
+	}()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("fetch Google metadata token failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf(
+			"fetch Google metadata token failed: status=%d body=%s",
+			resp.StatusCode,
+			strings.TrimSpace(string(body)),
+		)
 	}
 	var response struct {
 		AccessToken string `json:"access_token"`
@@ -471,7 +490,7 @@ func googleAccessToken(ctx context.Context, client *http.Client) (string, error)
 		return "", err
 	}
 	if response.AccessToken == "" {
-		return "", errors.New("Google metadata token response missing access_token")
+		return "", errors.New("google metadata token response missing access_token")
 	}
 	return response.AccessToken, nil
 }
@@ -529,7 +548,7 @@ func (p *vaultTransitProvider) authenticate(ctx context.Context) (string, error)
 			return "", err
 		}
 		if response.Auth.ClientToken == "" {
-			return "", errors.New("Vault Kubernetes auth returned empty client token")
+			return "", errors.New("vault Kubernetes auth returned empty client token")
 		}
 		return response.Auth.ClientToken, nil
 	default:
@@ -548,7 +567,7 @@ func (p *vaultTransitProvider) Wrap(ctx context.Context, plaintext []byte) (stri
 		return "", err
 	}
 	if response.Data.Ciphertext == "" {
-		return "", errors.New("Vault transit encrypt returned empty ciphertext")
+		return "", errors.New("vault transit encrypt returned empty ciphertext")
 	}
 	return response.Data.Ciphertext, nil
 }
@@ -564,7 +583,7 @@ func (p *vaultTransitProvider) Unwrap(ctx context.Context, wrapped string) ([]by
 		return nil, err
 	}
 	if response.Data.Plaintext == "" {
-		return nil, errors.New("Vault transit decrypt returned empty plaintext")
+		return nil, errors.New("vault transit decrypt returned empty plaintext")
 	}
 	return base64.StdEncoding.DecodeString(response.Data.Plaintext)
 }
@@ -594,13 +613,23 @@ func (p *vaultTransitProvider) doJSON(ctx context.Context, method, path, token s
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			log.Printf("close Vault response body: %v", closeErr)
+		}
+	}()
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Vault request %s %s failed: status=%d body=%s", method, path, resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return fmt.Errorf(
+			"vault request %s %s failed: status=%d body=%s",
+			method,
+			path,
+			resp.StatusCode,
+			strings.TrimSpace(string(respBody)),
+		)
 	}
 	if out != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, out); err != nil {

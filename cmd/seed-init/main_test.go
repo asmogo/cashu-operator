@@ -18,8 +18,9 @@ func TestSeedInitLocalProviderCreatesAndReusesEncryptedSeed(t *testing.T) {
 	seedPath := filepath.Join(dir, "seed.enc")
 	baseConfigPath := filepath.Join(dir, "base.toml")
 	outputConfigPath := filepath.Join(dir, "config.toml")
+	baseConfig := []byte("[info]\nurl = \"http://mint.test\"\n\n[bdk]\nnetwork = \"signet\"\n")
 
-	if err := os.WriteFile(baseConfigPath, []byte("[info]\nurl = \"http://mint.test\"\n\n[bdk]\nnetwork = \"signet\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(baseConfigPath, baseConfig, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("SEED_INIT_PROVIDER", providerLocal)
