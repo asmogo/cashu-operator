@@ -1,0 +1,54 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cc-operator-manager-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cc-operator-manager-role
+subjects:
+- kind: ServiceAccount
+  name: cc-operator-controller-manager
+  namespace: confidential-containers-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cc-operator-metrics-auth-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cc-operator-metrics-auth-role
+subjects:
+- kind: ServiceAccount
+  name: cc-operator-controller-manager
+  namespace: confidential-containers-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: peerpod-editor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: peerpod-editor
+subjects:
+- kind: ServiceAccount
+  name: cloud-api-adaptor
+  namespace: confidential-containers-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cc-operator-katadeploy-nfd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cc-operator-katadeploy-nfd
+subjects:
+- kind: ServiceAccount
+  name: cc-operator-controller-manager
+  namespace: confidential-containers-system

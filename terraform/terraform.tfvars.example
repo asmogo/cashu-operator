@@ -1,0 +1,21 @@
+# Copy to terraform.tfvars and fill in. Keep the mnemonic OUT of version control.
+
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+zone       = "us-central1-a"
+
+# Public hostname for the mint. Create a DNS A record -> mint_external_ip output.
+domain = "tee.ucash.space"
+
+# Confidential pod VM image (built out-of-band with mkosi, see README).
+podvm_image_name = "/projects/your-gcp-project-id/global/images/coco-podvm-fedora-mkosi-tee-amd-v0210-tdx"
+
+# BIP39 mnemonic for the mint wallet. SENSITIVE — provide via a tfvars file you
+# do not commit, or via TF_VAR_mint_mnemonic / -var, or a secrets manager.
+mint_mnemonic = "word1 word2 ... word24"
+
+# Optional
+# podvm_images_bucket = "your-project-podvm-images"
+# mint_name           = "ucash"
+# bdk_network         = "signet"
+# bdk_esplora_url     = "https://mutinynet.com/api"

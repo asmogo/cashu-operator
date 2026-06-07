@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    cloud.google.com/neg: '{"ingress":true}'
+  labels:
+    control-plane: controller-manager
+  name: cc-operator-controller-manager-metrics-service
+  namespace: confidential-containers-system
+spec:
+  ports:
+  - name: https
+    port: 8443
+    protocol: TCP
+    targetPort: 8443
+  selector:
+    control-plane: controller-manager
+  type: ClusterIP

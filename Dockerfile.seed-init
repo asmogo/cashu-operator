@@ -1,0 +1,16 @@
+FROM golang:1.24 AS builder
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/seed-init ./cmd/seed-init
+RUN mkdir -p /cdk-native \
+    && cp $(go env GOPATH)/pkg/mod/github.com/cashubtc/cdk-go@*/bindings/cdkffi/native/linux_amd64/libcdk_ffi.so /cdk-native/libcdk_ffi.so
+RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /seed-init ./cmd/seed-init
+
+FROM gcr.io/distroless/cc-debian12:nonroot
+WORKDIR /
+COPY --from=builder /seed-init /seed-init
+COPY --from=builder /cdk-native/libcdk_ffi.so /usr/lib/libcdk_ffi.so
+ENV LD_LIBRARY_PATH=/usr/lib
+USER 65532:65532
+ENTRYPOINT ["/seed-init"]

@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: peer-pods-cm
+  namespace: confidential-containers-system
+data:
+  CLOUD_PROVIDER: "gcp"
+  FORWARDER_PORT: "15150"
+  GCP_CONFIDENTIAL_TYPE: "${confidential_type}"
+  GCP_DISK_TYPE: "${disk_type}"
+  GCP_MACHINE_TYPE: "${machine_type}"
+  GCP_NETWORK: "global/networks/${network}"
+  GCP_PROJECT_ID: "${project_id}"
+  GCP_ZONE: "${zone}"
+  OPTIONS: "--tls-skip-verify"
+  PEERPODS_LIMIT_PER_NODE: "5"
+  PODVM_IMAGE_NAME: "${podvm_image_name}"
+  TLS_OPTIONS: "--tls-skip-verify"

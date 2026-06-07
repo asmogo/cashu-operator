@@ -47,6 +47,7 @@ func (r *CashuMint) Default() {
 	r.defaultOrchard()
 	r.defaultOperational()
 	r.defaultPaymentBackend()
+	r.defaultKeyManagement()
 }
 
 func (r *CashuMint) defaultMintInfo() {
@@ -364,6 +365,113 @@ func (r *CashuMint) defaultPaymentBackend() {
 	}
 }
 
+func (r *CashuMint) defaultKeyManagement() {
+	if r.Spec.KeyManagement == nil || r.Spec.KeyManagement.Mode != KeyManagementModeEncryptedPVC || r.Spec.KeyManagement.EncryptedPVC == nil {
+		return
+	}
+	cfg := r.Spec.KeyManagement.EncryptedPVC
+	if cfg.InitImage == "" {
+		cfg.InitImage = DefaultSeedInitImage
+	}
+	if cfg.SeedPath == "" {
+		cfg.SeedPath = "/data/seed.enc"
+	}
+	if cfg.BaseConfigPath == "" {
+		cfg.BaseConfigPath = "/config/base.toml"
+	}
+	if cfg.OutputConfigPath == "" {
+		cfg.OutputConfigPath = "/data/config.toml"
+	}
+	if cfg.Provider.VaultTransit != nil {
+		if cfg.Provider.VaultTransit.Mount == "" {
+			cfg.Provider.VaultTransit.Mount = "transit"
+		}
+		if cfg.Provider.VaultTransit.Auth.Kubernetes != nil {
+			if cfg.Provider.VaultTransit.Auth.Kubernetes.Mount == "" {
+				cfg.Provider.VaultTransit.Auth.Kubernetes.Mount = "kubernetes"
+			}
+			if cfg.Provider.VaultTransit.Auth.Kubernetes.TokenPath == "" {
+				cfg.Provider.VaultTransit.Auth.Kubernetes.TokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+			}
+		}
+	}
+}
+
+func (r *CashuMint) validateKeyManagement() error {
+	if r.Spec.KeyManagement == nil {
+		return nil
+	}
+	var errs []error
+	if r.Spec.KeyManagement.Mode != KeyManagementModeEncryptedPVC {
+		errs = append(errs, fmt.Errorf("spec.keyManagement.mode must be encryptedPVC"))
+	}
+	if r.Spec.KeyManagement.Mode == KeyManagementModeEncryptedPVC {
+		cfg := r.Spec.KeyManagement.EncryptedPVC
+		if cfg == nil {
+			errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC is required when mode is encryptedPVC"))
+		} else {
+			if TEEEnabled(&r.Spec) {
+				errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC cannot be combined with spec.tee.enabled"))
+			}
+			if r.Spec.MintInfo.AutoGenerateMnemonic {
+				errs = append(errs, fmt.Errorf("spec.mintInfo.autoGenerateMnemonic must be false when encryptedPVC key management is enabled"))
+			}
+			if r.Spec.MintInfo.MnemonicSecretRef != nil {
+				errs = append(errs, fmt.Errorf("spec.mintInfo.mnemonicSecretRef must be empty when encryptedPVC key management is enabled"))
+			}
+			if r.Spec.OnChain != nil && r.Spec.OnChain.BDK != nil && r.Spec.OnChain.BDK.MnemonicSecretRef != nil {
+				errs = append(errs, fmt.Errorf("spec.onChain.bdk.mnemonicSecretRef must be empty when encryptedPVC key management is enabled"))
+			}
+			provider := cfg.Provider
+			switch provider.Type {
+			case SeedProviderLocal:
+				if provider.Local == nil {
+					errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.local is required when type is local"))
+				} else if err := validateSecretKeySelector("spec.keyManagement.encryptedPVC.provider.local.keySecretRef", &provider.Local.KeySecretRef, true); err != nil {
+					errs = append(errs, err)
+				}
+			case SeedProviderVaultTransit:
+				vt := provider.VaultTransit
+				if vt == nil {
+					errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.vaultTransit is required when type is vaultTransit"))
+				} else {
+					if vt.Address == "" {
+						errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.vaultTransit.address is required"))
+					}
+					if vt.KeyName == "" {
+						errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.vaultTransit.keyName is required"))
+					}
+					switch vt.Auth.Method {
+					case "kubernetes":
+						if vt.Auth.Kubernetes == nil || vt.Auth.Kubernetes.Role == "" {
+							errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.vaultTransit.auth.kubernetes.role is required when method is kubernetes"))
+						}
+					case "token":
+						if err := validateSecretKeySelector("spec.keyManagement.encryptedPVC.provider.vaultTransit.auth.tokenSecretRef", vt.Auth.TokenSecretRef, true); err != nil {
+							errs = append(errs, err)
+						}
+					default:
+						errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.vaultTransit.auth.method must be kubernetes or token"))
+					}
+				}
+			case SeedProviderGoogleKMS:
+				gkms := provider.GoogleKMS
+				if gkms == nil {
+					errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.googleKMS is required when type is googleKMS"))
+				} else if gkms.KeyName == "" {
+					errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.googleKMS.keyName is required"))
+				}
+			default:
+				errs = append(errs, fmt.Errorf("spec.keyManagement.encryptedPVC.provider.type must be local, vaultTransit, or googleKMS"))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("keyManagement validation errors: %v", errs)
+	}
+	return nil
+}
+
 func (r *CashuMint) defaultFakeWallet() {
 	fw := r.Spec.PaymentBackend.FakeWallet
 	if fw.FeePercent == nil {
@@ -498,6 +606,18 @@ func (r *CashuMint) validateCashuMint() error {
 	}
 
 	if err := r.validateOrchard(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	if err := r.validateOnChain(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	if err := r.validateTEE(); err != nil {
+		allErrs = append(allErrs, err)
+	}
+
+	if err := r.validateKeyManagement(); err != nil {
 		allErrs = append(allErrs, err)
 	}
 
@@ -657,8 +777,8 @@ func (r *CashuMint) validatePaymentBackend() error {
 		count++
 	}
 
-	if count == 0 {
-		errs = append(errs, fmt.Errorf("spec.paymentBackend: exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor)"))
+	if count == 0 && !r.onChainEnabled() {
+		errs = append(errs, fmt.Errorf("spec.paymentBackend: exactly one backend must be specified (lnd, cln, lnbits, fakeWallet, or grpcProcessor), or spec.onChain must be configured"))
 	}
 	if count > 1 {
 		errs = append(errs, fmt.Errorf("spec.paymentBackend: only one backend may be specified, but %d were found", count))
@@ -867,5 +987,57 @@ func (r *CashuMint) validateOrchardAI(orchard *OrchardConfig) []error {
 	if orchard.AI.API == "" {
 		return []error{fmt.Errorf("spec.orchard.ai.api is required")}
 	}
+	return nil
+}
+
+func (r *CashuMint) onChainEnabled() bool {
+	return r.Spec.OnChain != nil && r.Spec.OnChain.Backend != ""
+}
+
+func (r *CashuMint) validateOnChain() error {
+	if !r.onChainEnabled() {
+		return nil
+	}
+	var errs []error
+	oc := r.Spec.OnChain
+	if oc.Backend == OnChainBackendBDK {
+		if oc.BDK == nil {
+			errs = append(errs, fmt.Errorf("spec.onChain.bdk is required when onChain.backend is bdk"))
+		} else {
+			if oc.BDK.Network == "" {
+				errs = append(errs, fmt.Errorf("spec.onChain.bdk.network is required"))
+			}
+			if oc.BDK.ChainSourceType == "esplora" && oc.BDK.EsploraURL == "" {
+				errs = append(errs, fmt.Errorf("spec.onChain.bdk.esploraUrl is required when chainSourceType is esplora"))
+			}
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("onChain validation errors: %v", errs)
+	}
+	return nil
+}
+
+func (r *CashuMint) validateTEE() error {
+	if r.Spec.TEE == nil || !r.Spec.TEE.Enabled {
+		return nil
+	}
+
+	var errs []error
+
+	if r.Spec.TEE.KBS == nil {
+		errs = append(errs, fmt.Errorf("spec.tee.kbs is required when TEE is enabled"))
+	} else if r.Spec.TEE.KBS.URL == "" {
+		errs = append(errs, fmt.Errorf("spec.tee.kbs.url is required when TEE is enabled"))
+	}
+
+	if r.Spec.TEE.SealedSecret == "" {
+		errs = append(errs, fmt.Errorf("spec.tee.sealedSecret is required when TEE is enabled"))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("TEE validation errors: %v", errs)
+	}
+
 	return nil
 }

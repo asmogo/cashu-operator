@@ -1,0 +1,108 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kbs-storage
+  namespace: coco-tenant
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: standard-rwo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kbs-config
+  namespace: coco-tenant
+data:
+  kbs-config.toml: |
+    [http_server]
+    sockets = ["0.0.0.0:8080"]
+    insecure_http = true
+
+    [attestation_token]
+    insecure_key = true
+
+    [attestation_service]
+    type = "coco_as_builtin"
+
+    [attestation_service.attestation_token_broker]
+    duration_min = 5
+
+    [attestation_service.rvps_config]
+    type = "BuiltIn"
+
+    [admin]
+    type = "Simple"
+
+    [[admin.personas]]
+    id = "admin"
+    public_key_path = "/kbs/kbs.pem"
+
+    [[plugins]]
+    name = "resource"
+    type = "kvstorage"
+
+    [storage_backend]
+    storage_type = "LocalFs"
+
+    [storage_backend.backends.local_fs]
+    dir_path = "/opt/confidential-containers/kbs"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kbs-allow-policy
+  namespace: coco-tenant
+data:
+  allow.rego: |
+    package policy
+    default allow = true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kbs
+  namespace: coco-tenant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kbs
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: kbs
+    spec:
+      containers:
+        - name: kbs
+          image: ghcr.io/confidential-containers/key-broker-service:built-in-as-v0.19.0
+          imagePullPolicy: Always
+          command: ["/usr/local/bin/kbs", "--config-file", "/etc/kbs/kbs-config.toml"]
+          env:
+            - name: QCNL_CONF_PATH
+              value: /run/dcap/qcnl.conf
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          volumeMounts:
+            - { name: kbs-auth-public-key, mountPath: /kbs/ }
+            - { name: kbs-config, mountPath: /etc/kbs/ }
+            - { name: policy-volume, mountPath: /opt/confidential-containers/kbs/ }
+            - { name: dcap-qcnl-config, mountPath: /run/dcap/ }
+      volumes:
+        - name: dcap-qcnl-config
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: kbs-auth-public-key
+          secret:
+            secretName: kbs-auth-public-key
+        - name: kbs-config
+          configMap:
+            name: kbs-config
+        - name: policy-volume
+          persistentVolumeClaim:
+            claimName: kbs-storage

@@ -1,0 +1,51 @@
+apiVersion: mint.cashu.asmogo.github.io/v1alpha1
+kind: CashuMint
+metadata:
+  name: tee-mint
+  namespace: default
+spec:
+  image: cashubtc/mintd:0.17.0-rc.0
+  replicas: 1
+  runtimeClassName: kata-remote
+  podAnnotations:
+    io.katacontainers.config.hypervisor.machine_type: "c3-standard-4"
+  nodeSelector:
+    cashu-coco-peer: "true"
+  tolerations:
+    - key: kata-remote
+      operator: Exists
+      effect: NoSchedule
+  tee:
+    enabled: true
+    sealedSecret: "sealed.placeholder.header.payload.signature"
+    kbs:
+      url: "http://10.128.0.9:30510"
+      skipSealedSecretVerification: true
+  mintInfo:
+    url: https://tee.ucash.space
+    listenHost: 0.0.0.0
+    listenPort: 8085
+    name: ucash
+    description: Confidential Cashu mint on Mutinynet (signet) running in Intel TDX TEE
+  database:
+    engine: sqlite
+    sqlite:
+      dataDir: /data
+  paymentBackend:
+    fakeWallet:
+      supportedUnits:
+        - sat
+      feePercent: 0.02
+      reserveFeeMin: 1
+      minDelayTime: 1
+      maxDelayTime: 3
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  logging:
+    level: info
+    format: json
